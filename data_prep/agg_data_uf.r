@@ -161,4 +161,49 @@ dengue_uf <- dengue_uf %>%
       list(
         # Calculates the mean of the previous 12 weeks
         mean_3mo = ~ dplyr::lag(mean_run(., k = 12, na_rm = TRUE), default = first(.)),
-        
+        mean_6mo = ~ dplyr::lag(mean_run(., k = 24, na_rm = TRUE), default = first(.)),
+        mean_9mo = ~ dplyr::lag(mean_run(., k = 36, na_rm = TRUE), default = first(.)),
+        mean_12mo = ~ dplyr::lag(mean_run(., k = 48, na_rm = TRUE), default = first(.))
+      ),
+      .names = "{col}_{fn}"
+    )
+  ) %>%
+  ungroup()
+
+# ── Summary (rolling-mean) covariates for chikungunya (mirrors dengue above) ──
+chikungunya_uf <- chikungunya_uf %>%
+  arrange(epiweek) %>%
+  group_by(uf) %>%
+  mutate(
+    across(
+      c(temp_min_mean, temp_med_mean, temp_max_mean, precip_min_mean, precip_med_mean, precip_max_mean,
+        pressure_min_mean, pressure_med_mean, pressure_max_mean, rel_humid_min_mean,
+        rel_humid_med_mean, rel_humid_max_mean, thermal_range_mean, rainy_days_mean),
+      list(
+        # Calculates the mean of the previous 12 weeks
+        mean_3mo = ~ dplyr::lag(mean_run(., k = 12, na_rm = TRUE), default = first(.)),
+        mean_6mo = ~ dplyr::lag(mean_run(., k = 24, na_rm = TRUE), default = first(.)),
+        mean_9mo = ~ dplyr::lag(mean_run(., k = 36, na_rm = TRUE), default = first(.)),
+        mean_12mo = ~ dplyr::lag(mean_run(., k = 48, na_rm = TRUE), default = first(.))
+      ),
+      .names = "{col}_{fn}"
+    )
+  ) %>%
+  ungroup()
+
+
+# count NAs by column
+na_counts_dengue <- sapply(dengue_uf, function(x) sum(is.na(x)))
+na_counts_chikungunya <- sapply(chikungunya_uf, function(x) sum(is.na(x)))
+
+lapply(unique(dengue_uf$uf), function(uf) {
+  if (uf == "ES") {
+    return()  # Skip ES
+  }
+  dengue_uf %>%
+    filter(uf == !!uf) %>%
+    write_csv(paste0("processed_data/dengue/dengue_", uf, "_agg.csv.gz"))
+  chikungunya_uf %>%
+    filter(uf == !!uf) %>%
+    write_csv(paste0("processed_data/chikungunya/chikungunya_", uf, "_agg.csv.gz"))
+})

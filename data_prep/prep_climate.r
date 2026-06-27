@@ -30,4 +30,36 @@ munis <- munis %>%
 # Noronha (PE), Ilhabela (SP), and Florianópolis-area Ilha de
 # Santa Catarina/Ilha do Mel-type codes. Hard-coded because there is no
 # generic "is an island" flag in the IBGE mesh.
-island_codes <- c(2916104, 2605
+island_codes <- c(2916104, 2605459, 2919926)
+
+islands   <- munis %>% filter(geocode %in% island_codes)
+mainland  <- munis %>% filter(!geocode %in% island_codes)
+
+# Further restrict mainland candidates to geocodes that actually have
+# climate data, so nearest-neighbor matching never picks a donor with no
+# series of its own.
+mainland  <- mainland %>% filter(geocode %in% unique(climate$geocode))
+
+# For each island, find its closest mainland municipality (by centroid).
+nearest_idx <- st_nearest_feature(islands, mainland)
+
+island_to_mainland <- tibble(
+  island_geocode   = islands$geocode,
+  mainland_geocode = mainland$geocode[nearest_idx]
+)
+
+# Copy the matched mainland municipality's climate series onto the island's
+# own geocode, then append it to the original table.
+climate_islands <- climate %>%
+  filter(geocode %in% island_to_mainland$mainland_geocode) %>%
+  left_join(island_to_mainland, by = c("geocode" = "mainland_geocode")) %>%
+  mutate(geocode = island_geocode) %>%
+  select(-island_geocode)
+
+climate_full <- bind_rows(climate, climate_islands)
+
+if (!dir.exists("processed_data/climate")) {
+  dir.create("processed_data/climate")
+}
+
+write_csv(climate_full, "processed_data/climate/climate.csv.gz")

@@ -42,4 +42,22 @@ cities_chikungunya <- c(
 )
 
 dengue_merged <- read_csv("processed_data/dengue/dengue_merged.csv.gz")
-chikungunya_merged <- read_csv("processed_data/chikungunya/chikungunya_me
+chikungunya_merged <- read_csv("processed_data/chikungunya/chikungunya_merged.csv.gz")
+
+lapply(cities_dengue, function(city) {
+  if (!dir.exists("processed_data/dengue/sel_cities")) {
+    dir.create("processed_data/dengue/sel_cities")
+  }
+  dengue_merged %>%
+    filter(geocode == city) %>%
+    write_csv(paste0("processed_data/dengue/sel_cities/dengue_", city, ".csv.gz"))
+})
+
+lapply(cities_chikungunya, function(city) {
+  if (!dir.exists("processed_data/chikungunya/sel_cities")) {
+    dir.create("processed_data/chikungunya/sel_cities")
+  }
+  chikungunya_merged %>%
+    filter(geocode == city) %>%
+    write_csv(paste0("processed_data/chikungunya/sel_cities/chikungunya_", city, ".csv.gz"))
+})

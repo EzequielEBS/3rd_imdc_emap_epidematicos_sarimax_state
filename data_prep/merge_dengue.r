@@ -30,5 +30,31 @@ ocean <- ocean %>%
     epiweek = as.integer(
       paste0(epiyear(date), sprintf("%02d", epiweek(date)))
     )
-  ) |>
-  dplyr::select(-
+  ) |> 
+  dplyr::select(-date)
+pop <- rbind(
+  pop,
+  lapply(unique(pop$geocode), function(code) {
+    data.frame(
+      geocode = code,
+      year = 2026,
+      population = pop$population[pop$geocode == code & pop$year == 2025]
+    )
+  }) %>% bind_rows()
+)
+
+# Merge data: left-join everything onto the dengue case series so every
+# case row is preserved even if a covariate table is missing that key.
+dengue_merged <- dengue %>%
+  left_join(climate, by = c("epiweek", "geocode")) %>%
+  left_join(env_vars, by = c("geocode", "uf_code")) %>%
+  left_join(ocean, by = "epiweek") %>%
+  left_join(pop, by = c("geocode", "year"))
+
+# Count NAs by column
+na_counts <- sapply(dengue_merged, function(x) sum(is.na(x)))
+
+if (!dir.exists("processed_data/dengue")) {
+  dir.create("processed_data/dengue")
+}
+write_csv(dengue_merged, "processed_data/dengue/dengue_merged.csv.gz")

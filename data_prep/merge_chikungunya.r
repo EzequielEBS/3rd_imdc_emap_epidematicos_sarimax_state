@@ -27,7 +27,7 @@ ocean <- ocean %>%
     epiweek = as.integer(
       paste0(epiyear(date), sprintf("%02d", epiweek(date)))
     )
-  ) |>
+  ) |> 
   dplyr::select(-date)
 # Extend population one year past the last available DATASUS estimate (2025)
 # by carrying the 2025 value forward to 2026.
@@ -36,4 +36,24 @@ pop <- rbind(
   lapply(unique(pop$geocode), function(code) {
     data.frame(
       geocode = code,
-      year =
+      year = 2026,
+      population = pop$population[pop$geocode == code & pop$year == 2025]
+    )
+  }) %>% bind_rows()
+)
+
+# Merge data: left-join everything onto the chikungunya case series so every
+# case row is preserved even if a covariate table is missing that key.
+chikungunya_merged <- chikungunya %>%
+  left_join(climate, by = c("epiweek", "geocode")) %>%
+  left_join(env_vars, by = c("geocode", "uf_code")) %>%
+  left_join(ocean, by = "epiweek") %>%
+  left_join(pop, by = c("geocode", "year"))
+
+# Count NAs by column
+na_counts <- sapply(chikungunya_merged, function(x) sum(is.na(x)))
+
+if (!dir.exists("processed_data/chikungunya")) {
+  dir.create("processed_data/chikungunya")
+}
+write_csv(chikungunya_merged, "processed_data/chikungunya/chikungunya_merged.csv.gz")

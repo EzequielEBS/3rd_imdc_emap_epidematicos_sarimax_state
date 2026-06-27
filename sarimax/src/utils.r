@@ -278,26 +278,22 @@ build_covariate_combinations <- function(data,
   valid
 }
 
-#' List candidate covariate column names present in a state/city data frame
+#' Assemble candidate covariate names by category (contemporaneous, lagged, rolling)
 #'
-#' Searches `data` for the contemporaneous weather/ocean-index columns in
-#' `vars`, plus their lagged (`_lag4/8/12/16`) and rolling-mean
-#' (`_mean_3mo/6mo/9mo/12mo`) versions created in `data_prep/agg_data_uf.r`.
-#' This is the starting point of the variable-selection pipeline used in
-#' `model_sel.r`: its output is narrowed down by `filter_low_variance()`,
-#' `filter_by_correlation()`, and either `select_best_per_variable()` or
-#' `pca_all()`.
-#'
-#' @param data        Data frame to search (one state's aggregated table).
-#' @param groups      Which feature families to include: any of
+#' @param data         Data frame to search for matching column names.
+#' @param groups       Character vector of categories to include: any of
 #'                     "contemporaneous", "lagged", "rolling".
-#' @param vars         Base variable names to look for (contemporaneous form).
-#' @param lag_select   If not NULL, restrict lagged features to this lag (in
-#'                     weeks), e.g. 4. If NULL, keep all available lags.
-#' @param roll_select  If not NULL, restrict rolling means to this window
-#'                     label, e.g. "3mo". If NULL, keep all available windows.
+#' @param vars         Base contemporaneous variable names to look for verbatim.
+#' @param lag_select   Optional integer vector restricting lagged columns to
+#'                     specific lag values (matches "<var>_lag<k>"). If NULL,
+#'                     all "_lag<digits>" columns are included.
+#' @param roll_select  Optional character vector restricting rolling-window
+#'                     columns to specific window labels (matches
+#'                     "<var>_mean_<window>"). If NULL, all "_mean_<digits>mo"
+#'                     columns are included.
 #'
-#' @return Character vector of column names present in `data`.
+#' @return Character vector of unique column names found in `data` that match
+#'         the requested groups/filters.
 get_candidates <- function(data,
                            groups       = c("contemporaneous", "lagged", "rolling"),
                            vars         = c("temp_med_mean", "precip_med_mean",
@@ -334,18 +330,14 @@ get_candidates <- function(data,
   unique(selected)
 }
 
-#' Drop near-constant covariates
+#' Drop near-constant covariates (standard deviation below a threshold)
 #'
-#' Removes any covariate whose standard deviation (computed on the rows
-#' passed in, typically the training split only) is below `threshold`.
-#' Near-constant covariates carry little information and can destabilize
-#' the SARIMAX regression coefficients.
+#' @param data        Data frame containing the covariate columns.
+#' @param covariates  Character vector of covariate names to check.
+#' @param threshold   Minimum standard deviation required to keep a covariate
+#'                    (default 0.01). Columns with sd <= threshold are dropped.
 #'
-#' @param data       Data frame containing the covariate columns.
-#' @param covariates Character vector of covariate names to check.
-#' @param threshold  Minimum standard deviation required to keep a column.
-#'
-#' @return Character vector: subset of `covariates` that passed the filter.
+#' @return Character vector of covariate names with low-variance columns removed.
 filter_low_variance <- function(data, covariates, threshold = 0.01) {
   vars_sd <- sapply(covariates, \(v) sd(data[[v]], na.rm = TRUE))
   keep    <- names(vars_sd[vars_sd > threshold])
@@ -355,25 +347,23 @@ filter_low_variance <- function(data, covariates, threshold = 0.01) {
   keep
 }
 
-#' Compute point and probabilistic forecast accuracy metrics
+#' Score a prediction tibble against observed values using scoringutils
 #'
-#' Given the output of `fit_sarimax()` / `fit_sarimax_epiweek()` (a tibble
-#' with `pred` plus `lower_*`/`upper_*` interval columns) and the
-#' corresponding observed values, reshapes the intervals into the long
-#' "quantile forecast" format expected by `scoringutils::score()` and
-#' computes the Weighted Interval Score (WIS) alongside standard point
-#' metrics (MAE, MSE, RMSE, MAPE) and empirical interval coverage.
+#' Converts the wide lower_*/pred/upper_* forecast tibble produced by
+#' `fit_sarimax()` into the long quantile-forecast format `scoringutils`
+#' expects, then computes the Weighted Interval Score plus point-forecast
+#' error metrics and per-level empirical coverage.
 #'
-#' @param pred_df  Tibble with columns `pred`, and `lower_{lv}`/`upper_{lv}`
-#'                 for each level in `levels` (one row per forecasted date).
+#' @param pred_df  Output tibble from `fit_sarimax()`: columns `pred`,
+#'                 `lower_<level>`, `upper_<level>` for each level in `levels`.
 #' @param actual   Numeric vector of observed case counts, same length/order
-#'                 as the rows of `pred_df`.
-#' @param levels   Numeric vector of prediction-interval levels (in percent)
-#'                 present in `pred_df`, e.g. c(50, 80, 90, 95).
+#'                 as `pred_df`.
+#' @param levels   Numeric vector of prediction-interval coverage levels
+#'                 present in `pred_df` (default c(50, 80, 90, 95)).
 #'
-#' @return A named list with `wis`, `mae`, `mse`, `rmse`, `mape`, and one
-#'   `coverage_{level}` entry per level in `levels` (empirical fraction of
-#'   observations falling inside that interval).
+#' @return A named list: `wis`, `mae`, `mse`, `rmse`, `mape`, and one
+#'         `coverage_<level>` entry per level (empirical interval coverage).
+# scoringutils expects a long data frame with quantile forecasts
 compute_metrics <- function(
   pred_df,
   actual,
@@ -666,20 +656,17 @@ run_grid_search <- function(data,
   list(predictions = predictions, metrics = metrics)
 }
 
-#' Keep only the best lag/rolling-window representation of each base variable
+#' Reduce each lag/rolling family to its single most-predictive candidate
 #'
-#' `get_candidates()` returns several versions of the same underlying
-#' variable (e.g. `temp_med_mean`, `temp_med_mean_lag4`, `temp_med_mean_lag8`,
-#' `temp_med_mean_mean_3mo`, ...). Fitting all of them together would be
-#' redundant and collinear. For each base variable, this keeps only the
-#' single version most correlated (in absolute value) with `log1p(response)`,
-#' on the rows supplied in `data` (callers should pass training rows only).
+#' For every base variable (after stripping "_lag<k>" / "_mean_<k>mo"
+#' suffixes), keep only the one candidate column most correlated with
+#' log1p(response).
 #'
-#' @param data       Data frame containing `covariates` and `response`.
-#' @param covariates Character vector of candidate covariate names (possibly
-#'                    several per base variable).
-#' @param response   Name of the response column (default "cases"); compared
-#'                    on the log1p scale to match how the model is fit.
+#' @param data        Data frame containing `covariates` and `response`.
+#' @param covariates  Character vector of candidate covariate names, possibly
+#'                    spanning several lag/rolling variants per base variable.
+#' @param response    Name of the response column to correlate against
+#'                    (default "cases"; correlated on the log1p scale).
 #'
 #' @return Character vector with one (best) covariate name per base variable.
 select_best_per_variable <- function(data, covariates, response = "cases") {
@@ -698,19 +685,16 @@ select_best_per_variable <- function(data, covariates, response = "cases") {
   unname(unlist(result))
 }
 
-#' Drop covariates weakly correlated with the response
+#' Drop covariates weakly correlated with the (log1p) response
 #'
-#' Computes |Pearson correlation| between each covariate and
-#' `log1p(response)` (training rows only) and discards any covariate below
-#' `min_cor`. Used in the variable-selection pipeline right after
-#' `filter_low_variance()`.
+#' @param data        Data frame containing `covariates` and `response`.
+#' @param covariates  Character vector of candidate covariate names.
+#' @param response    Name of the response column (default "cases";
+#'                    correlated on the log1p scale).
+#' @param min_cor     Minimum absolute Pearson correlation required to keep a
+#'                    covariate (default 0.1).
 #'
-#' @param data       Data frame containing `covariates` and `response`.
-#' @param covariates Character vector of candidate covariate names.
-#' @param response   Name of the response column (default "cases").
-#' @param min_cor    Minimum |correlation| required to keep a covariate.
-#'
-#' @return Character vector: subset of `covariates` that passed the filter.
+#' @return Character vector of covariate names passing the correlation filter.
 filter_by_correlation <- function(data, covariates,
                                   response  = "cases",
                                   min_cor   = 0.1) {
@@ -719,3 +703,167 @@ filter_by_correlation <- function(data, covariates,
     abs(cor(data[[v]], y, use = "pairwise.complete.obs")))
 
   keep    <- names(cors[cors >= min_cor])
+  dropped <- setdiff(covariates, keep)
+
+  if (length(dropped) > 0)
+    message(sprintf("Dropped %d weak predictor(s): %s",
+                    length(dropped), paste(dropped, collapse = ", ")))
+  keep
+}
+
+#' Drop climate indices (ENSO/IOD/PDO) redundant with local weather covariates
+#'
+#' Residualises log1p(cases) on the local-weather covariates, then keeps an
+#' index only if its correlation with that residual still exceeds `threshold`
+#' — i.e. the index explains variation not already captured by local weather.
+#'
+#' @param data        Data frame containing `covariates` and `cases`.
+#' @param covariates  Character vector of candidate covariate names (mix of
+#'                    local weather variables and climate indices).
+#' @param indices     Names treated as climate indices (default
+#'                    c("enso", "iod", "pdo")).
+#' @param threshold   Minimum absolute residual correlation required to keep
+#'                    an index (default 0.3).
+#'
+#' @return Character vector: all local-weather covariates plus any indices
+#'         that passed the redundancy filter.
+filter_redundant_indices <- function(data, covariates,
+                                     indices   = c("enso", "iod", "pdo"),
+                                     threshold = 0.3) {
+  # Keep an index only if its partial correlation with response
+  # (after removing linear effect of local weather) exceeds threshold
+  local_weather <- setdiff(covariates, indices)
+  present_indices <- intersect(indices, covariates)
+
+  if (length(local_weather) == 0 || length(present_indices) == 0)
+    return(covariates)
+
+  y       <- log1p(data$cases)
+  X_local <- as.matrix(data[, local_weather, drop = FALSE])
+
+  # Residualise response on local weather
+  y_resid <- residuals(lm(y ~ X_local))
+
+  keep_indices <- Filter(function(idx) {
+    abs(cor(data[[idx]], y_resid, use = "pairwise.complete.obs")) >= threshold
+  }, present_indices)
+
+  dropped <- setdiff(present_indices, keep_indices)
+  if (length(dropped) > 0)
+    message(sprintf("Dropped redundant index/indices: %s",
+                    paste(dropped, collapse = ", ")))
+
+  c(local_weather, keep_indices)
+}
+
+#' Parse a "(p,d,q)(P,D,Q)"-style order string back into numeric vectors
+#'
+#' @param order_str  Character string formatted like "(1,1,1)(1,0,1)", as
+#'                   produced by `run_grid_search()`.
+#'
+#' @return A list with `order` (p,d,q) and `seasonal_order` (P,D,Q) integer
+#'         vectors.
+parse_order <- function(order_str) {
+  nums <- as.integer(regmatches(order_str, gregexpr("[0-9]", order_str))[[1]])
+  list(order = nums[1:3], seasonal_order = nums[4:6])
+}
+
+#' Recommend non-seasonal and seasonal differencing orders for a series
+#'
+#' @param y      Numeric vector or ts object (typically log1p(cases)).
+#' @param max_d  Maximum non-seasonal differencing order to consider for the
+#'               KPSS test (default 2).
+#'
+#' @return A list with recommended `d` (KPSS test, non-seasonal) and `D`
+#'         (OCSB test, seasonal period 52) differencing orders.
+determine_d <- function(y, max_d = 2) {
+  d  <- ndiffs(y,  test = "kpss", max.d = max_d)
+  D  <- nsdiffs(y, test = "ocsb", m = 52)
+  message(sprintf("Recommended: d = %d, D = %d", d, D))
+  list(d = d, D = D)
+}
+
+#' Fold-consistent PCA dimensionality reduction over candidate covariates
+#'
+#' Fits PCA separately within each fold\'s training rows (to avoid leakage),
+#' chooses the number of components needed to explain `var_threshold` of
+#' variance in the worst-case fold, then projects every fold\'s train+target
+#' rows onto that common number of components.
+#'
+#' @param data           Data frame containing `candidates` and the
+#'                       `train_cols` indicator columns.
+#' @param candidates     Character vector of covariate names to reduce via PCA.
+#' @param train_cols     Character vector of training-indicator column names,
+#'                       one per CV fold (default paste0("train_", 1:4)).
+#' @param var_threshold  Minimum cumulative explained-variance fraction used
+#'                       to pick the number of components (default 0.90).
+#'
+#' @return A list with `data` (original data plus PC1..PCk score columns),
+#'         `variables` (the new PC column names), and `var_table` (per-
+#'         component and cumulative variance explained).
+pca_all <- function(data,
+                    candidates,
+                    train_cols    = paste0("train_", 1:4),
+                    var_threshold = 0.90) {
+
+  mat    <- as.matrix(data[, candidates, drop = FALSE])
+  n_rows <- nrow(data)
+
+  # ── 1. Pre-compute n_comp consistently across all folds ───────────────────
+  n_comps <- sapply(seq_along(train_cols), function(i) {
+    train_rows <- data[[train_cols[i]]] == 1
+    pca_fit    <- prcomp(mat[train_rows, , drop = FALSE],
+                         center = TRUE, scale. = TRUE)
+    var_exp    <- cumsum(pca_fit$sdev^2) / sum(pca_fit$sdev^2)
+    max(1L, which(var_exp >= var_threshold)[1])
+  })
+
+  # Use minimum across folds so all folds produce the same number of components
+  n_comp     <- min(n_comps)
+  comp_names <- paste0("PC", seq_len(n_comp))
+  scores_out <- matrix(NA_real_, nrow = n_rows, ncol = n_comp,
+                       dimnames = list(NULL, comp_names))
+
+  message(sprintf("Using %d components (min across folds: %s).",
+                  n_comp, paste(n_comps, collapse = ", ")))
+
+  # ── 2. Fit per fold and write scores ──────────────────────────────────────
+  pca_fit_last <- NULL
+
+  for (i in seq_along(train_cols)) {
+    train_col  <- train_cols[i]
+    target_col <- sub("train_", "target_", train_col)
+    train_rows <- data[[train_col]] == 1
+    fold_rows  <- data[[train_col]] == 1 | data[[target_col]] == 1
+
+    message(sprintf("Fold %d: fitting PCA on %d training rows.", i, sum(train_rows)))
+
+    pca_fit <- prcomp(mat[train_rows, , drop = FALSE],
+                      center = TRUE, scale. = TRUE)
+
+    mat_scaled <- scale(mat[fold_rows, , drop = FALSE],
+                        center = pca_fit$center,
+                        scale  = pca_fit$scale)
+
+    # Always take exactly n_comp components
+    scores <- mat_scaled %*% pca_fit$rotation[, seq_len(n_comp), drop = FALSE]
+
+    scores_out[fold_rows, ] <- scores
+    pca_fit_last <- pca_fit
+  }
+
+  # ── 3. Variance table (based on consistent n_comp) ────────────────────────
+  var_table <- tibble(
+    component = comp_names,
+    var_exp   = pca_fit_last$sdev[seq_len(n_comp)]^2 / sum(pca_fit_last$sdev^2),
+    cum_var   = cumsum(pca_fit_last$sdev[seq_len(n_comp)]^2 /
+                       sum(pca_fit_last$sdev^2))
+  )
+  print(var_table)
+
+  list(
+    data      = bind_cols(data, as_tibble(scores_out)),
+    variables = comp_names,
+    var_table = var_table
+  )
+}

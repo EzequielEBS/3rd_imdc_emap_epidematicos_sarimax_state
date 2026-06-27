@@ -1,11 +1,12 @@
 source("sarimax/src/utils.r")
 
-# ── Helper: does a given year have 53 epiweeks? ───────────────────────────
+# ── Helper: does a given year have 53 epiweeks? (MMWR/Brazilian calendar) ──
 has_53_weeks <- function(year) {
-  as.integer(format(as.Date(paste0(year, "-12-28")), "%V")) == 53
+  dec28 <- as.Date(paste0(year, "-12-28"))
+  as.integer(format(dec28, "%U")) == 53  # %U = week starting Sunday (MMWR)
 }
 
-# ── Helper: enumerate all epiweeks between two YYYYWW integers ────────────
+# ── Helper: enumerate all epiweeks between two YYYYWW integers ─────────────
 enumerate_epiweeks <- function(start, end) {
   start_year <- start %/% 100L
   start_week <- start  %% 100L
@@ -30,7 +31,7 @@ enumerate_epiweeks <- function(start, end) {
   epiweeks
 }
 
-# ── Helper: given YYYYWW, return the previous year's equivalent epiweek ───
+# ── Helper: given YYYYWW, return the previous year's equivalent epiweek ────
 # If the previous year does not have that week (week 53 in a 52-week year),
 # shift forward by one week.
 prev_year_epiweek <- function(yw) {
@@ -47,19 +48,22 @@ prev_year_epiweek <- function(yw) {
   }
 }
 
-# ── Helper: get the Monday date of a given YYYYWW epiweek (ISO 8601) ──────
+# ── Helper: get the Sunday date opening a given YYYYWW epiweek (MMWR) ──────
 epiweek_to_date <- function(yw) {
-  yr <- yw %/% 100L
-  wk <- yw  %% 100L
-  # ISO week date: Monday of week WW of year YYYY
-  # Jan 4th is always in week 1
-  jan4     <- as.Date(paste0(yr, "-01-04"))
-  monday_w1 <- jan4 - as.integer(format(jan4, "%u")) + 1L
-  monday_w1 + (wk - 1L) * 7L
+  yr  <- yw %/% 100L
+  wk  <- yw  %% 100L
+  # MMWR weeks start on Sunday; find the Sunday that opens week 1
+  jan1     <- as.Date(paste0(yr, "-01-01"))
+  dow_jan1 <- as.integer(format(jan1, "%w"))  # %w: 0 = Sunday
+  sunday_w1 <- if (dow_jan1 <= 3L) {
+    jan1 - dow_jan1          # back up to the opening Sunday of week 1
+  } else {
+    jan1 + (7L - dow_jan1)  # forward to the next Sunday (week 1 starts there)
+  }
+  sunday_w1 + (wk - 1L) * 7L + 1L
 }
 
-fit_sarimax_epiweek <- function(
-                        data,
+fit_sarimax <- function(data,
                         formula,
                         train_start,
                         train_end,
@@ -74,34 +78,32 @@ fit_sarimax_epiweek <- function(
                         seasonal      = list(order = c(1, 0, 1), period = 52),
                         bootstrap     = TRUE,
                         npaths        = 1000) {
- 
+
   stopifnot(is.data.frame(data))
   stopifnot("epiweek" %in% names(data))
   stopifnot("cases"   %in% names(data))
- 
-  # ── 1. Training rows ───────────────────────────────────────────────────────
+
+  # ── 1. Training rows ────────────────────────────────────────────────────────
   train_rows <- data[data$epiweek >= train_start & data$epiweek <= train_end, ]
   if (nrow(train_rows) == 0) {
     stop("No training rows found for epiweeks ", train_start, "–", train_end)
   }
- 
-  # ── 2. Enumerate forecast epiweeks & build forecast dates/prev-year info ──
+
+  # ── 2. Enumerate forecast epiweeks & build forecast dates/prev-year info ───
   fc_epiweeks <- enumerate_epiweeks(forecast_start, forecast_end)
   n_fc        <- length(fc_epiweeks)
- 
+
   prev_epiweeks  <- integer(n_fc)
   forecast_dates <- as.Date(rep(NA, n_fc))
   adjusted_idx   <- logical(n_fc)
- 
+
   for (i in seq_len(n_fc)) {
-    res              <- prev_year_epiweek(fc_epiweeks[i])
-    prev_epiweeks[i] <- res$epiweek
-    adjusted_idx[i]  <- res$adjusted
-    # Forecast date = Monday of the forecast epiweek
-    # (Sunday = Monday + 6 if your dates are Sundays)
-    forecast_dates[i] <- epiweek_to_date(fc_epiweeks[i]) - 1L  # Sunday
+    res               <- prev_year_epiweek(fc_epiweeks[i])
+    prev_epiweeks[i]  <- res$epiweek
+    adjusted_idx[i]   <- res$adjusted
+    forecast_dates[i] <- epiweek_to_date(fc_epiweeks[i])  # already Sunday
   }
- 
+
   if (any(adjusted_idx)) {
     adj_info <- paste0(
       fc_epiweeks[adjusted_idx], " (prev: ", prev_epiweeks[adjusted_idx], ")",
@@ -114,11 +116,11 @@ fit_sarimax_epiweek <- function(
       call. = FALSE
     )
   }
- 
-  # ── 3. Log-transform response ──────────────────────────────────────────────
+
+  # ── 3. Log-transform response ───────────────────────────────────────────────
   y <- if (is.null(lambda)) log1p(train_rows$cases) else train_rows$cases
- 
-  # ── 4. Build & standardize regressor matrices ──────────────────────────────
+
+  # ── 4. Build & standardize regressor matrices ───────────────────────────────
   rhs_terms <- {
     if (is.null(formula)) {
       character(0)
@@ -132,22 +134,22 @@ fit_sarimax_epiweek <- function(
       attr(stats::terms(formula), "term.labels")
     }
   }
- 
+
   if (length(rhs_terms) == 0) {
     xreg_train  <- NULL
     xreg_future <- NULL
   } else {
     raw_train <- as.matrix(train_rows[, rhs_terms, drop = FALSE])
- 
+
     col_means <- colMeans(raw_train, na.rm = TRUE)
     col_sds   <- apply(raw_train, 2, sd, na.rm = TRUE)
     col_sds[col_sds == 0] <- 1
- 
+
     xreg_train <- scale(raw_train, center = col_means, scale = col_sds)
- 
+
     # Look up previous-year rows by epiweek
-    prev_rows  <- data[match(prev_epiweeks, data$epiweek), rhs_terms, drop = FALSE]
- 
+    prev_rows <- data[match(prev_epiweeks, data$epiweek), rhs_terms, drop = FALSE]
+
     if (any(is.na(prev_rows))) {
       missing_ew <- prev_epiweeks[apply(is.na(prev_rows), 1, any)]
       stop(
@@ -155,15 +157,15 @@ fit_sarimax_epiweek <- function(
         paste(missing_ew, collapse = ", ")
       )
     }
- 
+
     raw_future  <- as.matrix(prev_rows)
     xreg_future <- scale(raw_future, center = col_means, scale = col_sds)
   }
- 
-  # ── 5. Fit SARIMAX ─────────────────────────────────────────────────────────
+
+  # ── 5. Fit SARIMAX ──────────────────────────────────────────────────────────
   y_ts         <- ts(y, frequency = seasonal$period)
   fit_warnings <- character(0)
- 
+
   fit <- withCallingHandlers(
     forecast::Arima(
       y_ts,
@@ -181,8 +183,8 @@ fit_sarimax_epiweek <- function(
       invokeRestart("muffleWarning")
     }
   )
- 
-  # ── 6. Detect NaN standard errors ─────────────────────────────────────────
+
+  # ── 6. Detect NaN standard errors ──────────────────────────────────────────
   nan_se_params <- names(which(is.nan(sqrt(diag(fit$var.coef)))))
   if (length(nan_se_params) > 0) {
     fit_warnings <- c(
@@ -195,11 +197,11 @@ fit_sarimax_epiweek <- function(
       )
     )
   }
- 
-  # ── 7. Forecast & back-transform ───────────────────────────────────────────
-  levels <- sort(unique(levels))
+
+  # ── 7. Forecast & back-transform ────────────────────────────────────────────
+  levels      <- sort(unique(levels))
   fc_warnings <- character(0)
- 
+
   fc <- withCallingHandlers(
     forecast::forecast(
       fit,
@@ -214,32 +216,32 @@ fit_sarimax_epiweek <- function(
       invokeRestart("muffleWarning")
     }
   )
- 
+
   bt <- if (is.null(lambda)) expm1 else identity
- 
-  # ── 8. Assemble output tibble ──────────────────────────────────────────────
+
+  # ── 8. Assemble output tibble ───────────────────────────────────────────────
   out <- tibble::tibble(
     date    = forecast_dates,
     pred    = bt(as.numeric(fc$mean))
   )
- 
+
   for (lv in levels) {
     lv_char <- paste0(lv, "%")
     out[[paste0("lower_", lv)]] <- bt(as.numeric(fc$lower[, lv_char]))
     out[[paste0("upper_", lv)]] <- bt(as.numeric(fc$upper[, lv_char]))
   }
- 
+
   out <- out |>
     dplyr::mutate(dplyr::across(
       c(pred, dplyr::starts_with("lower_"), dplyr::starts_with("upper_")),
       \(x) pmax(x, 0)
     ))
- 
-  # ── 9. Attach metadata ─────────────────────────────────────────────────────
+
+  # ── 9. Attach metadata ──────────────────────────────────────────────────────
   all_warnings <- c(fit_warnings, fc_warnings)
   attr(out, "warnings") <- if (length(all_warnings) > 0) all_warnings else NULL
   attr(out, "fit")      <- fit
- 
+
   out
 }
 
@@ -296,9 +298,9 @@ preds_dengue_state <- lapply(best_wis_df_dengue_state$state, function(st) {
     }
     write_csv(fit, file.path("sarimax/results/preds/", paste0("pred_dengue_", st, "_", target_id, ".csv")))
   })
-  names(pred_target) <- target_ids
-  bind_rows(pred_target, .id = "target_id") |>
-    mutate(state = st)
+  # names(pred_target) <- target_ids
+  # bind_rows(pred_target, .id = "target_id") |>
+    # mutate(state = st)
 })
 
 best_wis_df_chikungunya_state <- read_csv("sarimax/results/metrics/best_wis_chikungunya_all_states.csv", show_col_types = FALSE)

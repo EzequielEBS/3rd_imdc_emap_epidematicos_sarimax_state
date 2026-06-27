@@ -260,7 +260,7 @@ results_state_chikungunya <- lapply(states, function(st) {
 )
 
 best_wis_df_chikungunya <- lapply(states, function(st) {
-  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_chikungunya", st, ".csv")
+  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_chikungunya_", st, ".csv")
   data <- read_csv(file_name, show_col_types = FALSE)
   data[1, ] |> mutate(state = st, .before = 1)
 }) |> bind_rows()

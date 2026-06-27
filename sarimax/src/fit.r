@@ -60,7 +60,8 @@ prev_year_epiweek <- function(yw) {
   }
 }
 
-fit_sarimax <- function(data,
+
+fit_sarimax_epiweek <- function(data,
                         formula,
                         train_start,
                         train_end,
@@ -164,17 +165,16 @@ fit_sarimax <- function(data,
   fit_warnings <- character(0)
 
   fit <- withCallingHandlers(
-    forecast::Arima(
-      y_ts,
-      order         = order,
-      seasonal      = seasonal,
-      xreg          = xreg_train,
-      method        = method,
-      lambda        = lambda,
-      optim.control = optim.control,
-      optim.method  = optim.method
-    ),
-    error   = function(e) stop("Arima() failed: ", conditionMessage(e)),
+    Arima(y_ts,
+          order    = order,
+          seasonal = seasonal,
+          xreg     = xreg_train,
+          method   = method,
+          lambda   = lambda,
+          optim.control = optim.control,
+          optim.method  = optim.method
+        ),
+    error = function(e) stop("Arima() failed: ", conditionMessage(e)),
     warning = function(w) {
       fit_warnings <<- c(fit_warnings, conditionMessage(w))
       invokeRestart("muffleWarning")
@@ -182,10 +182,19 @@ fit_sarimax <- function(data,
   )
 
   # ── 6. Detect NaN standard errors ──────────────────────────────────────────
-  nan_se_params <- names(which(is.nan(sqrt(diag(fit$var.coef)))))
+  se_warnings <- character(0)
+  ses <- withCallingHandlers(
+    sqrt(diag(fit$var.coef)),
+    warning = function(w) {
+      se_warnings <<- c(se_warnings, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  nan_se_params <- names(which(is.nan(ses)))
   if (length(nan_se_params) > 0) {
     fit_warnings <- c(
       fit_warnings,
+      se_warnings,
       paste0(
         "NaN standard errors for: ",
         paste(nan_se_params, collapse = ", "),
@@ -270,7 +279,7 @@ preds_dengue_state <- lapply(best_wis_df_dengue_state$state, function(st) {
   best_formula <- best_wis_df_dengue_state |> filter(state == st) |> pull(formula_id)
   train_ids  <- paste0("train_", 1:4)
   target_ids <- paste0("target_", 1:4)
-  pred_target <- lapply(4, function(i) {
+  pred_target <- lapply(seq_along(train_ids), function(i) {
     train_id <- train_ids[i]
     target_id <- target_ids[i]
     if (train_id == "train_4") {
@@ -295,17 +304,18 @@ preds_dengue_state <- lapply(best_wis_df_dengue_state$state, function(st) {
     }
     write_csv(fit, file.path("sarimax/results/preds/", paste0("pred_dengue_", st, "_", target_id, ".csv")))
   })
-  # names(pred_target) <- target_ids
-  # bind_rows(pred_target, .id = "target_id") |>
-    # mutate(state = st)
+  names(pred_target) <- target_ids
+  bind_rows(pred_target, .id = "target_id") |>
+    mutate(state = st)
 })
 
 best_wis_df_chikungunya_state <- read_csv("sarimax/results/metrics/best_wis_chikungunya_all_states.csv", show_col_types = FALSE)
+state_warnings_chikungunya <- list()
 
 preds_chikungunya_state <- lapply(best_wis_df_chikungunya_state$state, function(st) {
   file_name <- paste0("processed_data/chikungunya/chikungunya_", st, "_agg.csv.gz")
   d <- read_csv(file_name, show_col_types = FALSE)
-  train_rows <- d$train_1 == 1 | d$train_2 == 1 | d$train_3 == 1 | d$train_4 == 1
+  train_rows <- d$train_1 == 1
 
   candidates <- get_candidates(d)
   candidates <- filter_low_variance(d, candidates, threshold = 0.01)
@@ -314,6 +324,7 @@ preds_chikungunya_state <- lapply(best_wis_df_chikungunya_state$state, function(
     candidates,
     min_cor = 0.1
   )
+    
 
   pca_result <- pca_all(
     data = d,
@@ -330,16 +341,163 @@ preds_chikungunya_state <- lapply(best_wis_df_chikungunya_state$state, function(
   pred_target <- lapply(seq_along(train_ids), function(i) {
     train_id <- train_ids[i]
     target_id <- target_ids[i]
-    fit <- fit_sarimax(
-      data = d,
-      formula = best_formula,
-      order = c(ord$order[1], ord$order[2], ord$order[3]),
-      seasonal = list(order = c(ord$seasonal_order[1], ord$seasonal_order[2], ord$seasonal_order[3]), period = 52),
-      train_id = train_id
-    )
+    if (train_id == "train_4") {
+      fit <- fit_sarimax_epiweek(
+        data = d,
+        formula = best_formula,
+        train_start = 201001,
+        train_end = 202525,
+        forecast_start = 202541,
+        forecast_end = 202640,
+        order = c(ord$order[1], ord$order[2], ord$order[3]),
+        seasonal = list(order = c(ord$seasonal_order[1], ord$seasonal_order[2], ord$seasonal_order[3]), period = 52),
+        optim.method = "BFGS"
+      )
+    } else {
+      fit <- fit_sarimax(
+        data = d,
+        formula = best_formula,
+        order = c(ord$order[1], ord$order[2], ord$order[3]),
+        seasonal = list(order = c(ord$seasonal_order[1], ord$seasonal_order[2], ord$seasonal_order[3]), period = 52),
+        train_id = train_id
+      )
+    }
+    # ── Report warnings with state/target context ──────────────────────────
+    w <- attr(fit, "warnings")
+    if (!is.null(w)) {
+      state_warnings_chikungunya[[st]] <<- c(state_warnings_chikungunya[[st]],
+        setNames(w, rep(target_id, length(w))))
+      message(sprintf("[%s | %s] %d warning(s):\n%s",
+                      st, target_id, length(w),
+                      paste0("  - ", w, collapse = "\n")))
+    }
     write_csv(fit, file.path("sarimax/results/preds/", paste0("pred_chikungunya_", st, "_", target_id, ".csv")))
+    fit
   })
   names(pred_target) <- target_ids
   bind_rows(pred_target, .id = "target_id") |>
     mutate(state = st)
 })
+
+# states_to_retry_chikungunya <- names(state_warnings_chikungunya)
+states_to_retry_chikungunya <- c("DF", "MS", "RO", "SP")
+state_warnings_chikungunya <- list()
+preds_chikungunya_retry    <- list()
+resolved_formulas_chikungunya <- tibble(state = character(), formula_id = character(), order = character(), row = integer())
+
+for (st in states_to_retry_chikungunya) {
+  file_name <- paste0("processed_data/chikungunya/chikungunya_", st, "_agg.csv.gz")
+  d <- read_csv(file_name, show_col_types = FALSE)
+  train_rows <- d$train_1 == 1
+
+  candidates <- get_candidates(d)
+  candidates <- filter_low_variance(d, candidates, threshold = 0.01)
+  candidates <- filter_by_correlation(
+    d[train_rows, ],
+    candidates,
+    min_cor = 0.1
+  )
+
+  pca_result <- pca_all(
+    data       = d,
+    candidates = candidates[!grepl("enso|iod|pdo", candidates)],
+    var_threshold = 0.9
+  )
+  d <- pca_result$data
+
+  metrics_file <- paste0("sarimax/results/metrics/metrics_all_formulas_chikungunya_", st, ".csv")
+  metrics_df   <- read_csv(metrics_file, show_col_types = FALSE)
+
+  i          <- 2
+  resolved   <- FALSE
+
+  while (i <= nrow(metrics_df) && !resolved) {
+    message(sprintf("[%s] Trying formula row %d of %d: %s",
+                    st, i, nrow(metrics_df), metrics_df$formula_id[i]))
+
+    best_order   <- metrics_df$order[i]
+    ord          <- parse_order(best_order)
+    best_formula <- metrics_df$formula_id[i]
+    train_ids    <- paste0("train_", 1:4)
+    target_ids   <- paste0("target_", 1:4)
+
+    # Reset warnings for this attempt
+    attempt_warnings <- list()
+
+    pred_target <- lapply(seq_along(train_ids), function(j) {
+      train_id  <- train_ids[j]
+      target_id <- target_ids[j]
+
+      if (train_id == "train_4") {
+        fit <- fit_sarimax_epiweek(
+          data           = d,
+          formula        = best_formula,
+          train_start    = 201001,
+          train_end      = 202525,
+          forecast_start = 202541,
+          forecast_end   = 202640,
+          order          = c(ord$order[1], ord$order[2], ord$order[3]),
+          seasonal       = list(order = c(ord$seasonal_order[1], ord$seasonal_order[2], ord$seasonal_order[3]), period = 52),
+          optim.method   = "BFGS"
+        )
+      } else {
+        fit <- fit_sarimax(
+          data     = d,
+          formula  = best_formula,
+          order    = c(ord$order[1], ord$order[2], ord$order[3]),
+          seasonal = list(order = c(ord$seasonal_order[1], ord$seasonal_order[2], ord$seasonal_order[3]), period = 52),
+          train_id = train_id
+        )
+      }
+
+      w <- attr(fit, "warnings")
+      if (!is.null(w)) {
+        attempt_warnings[[target_id]] <<- w
+        message(sprintf("[%s | %s] %d warning(s):\n%s",
+                        st, target_id, length(w),
+                        paste0("  - ", w, collapse = "\n")))
+      }
+
+      fit
+    })
+    names(pred_target) <- target_ids
+
+    # Check if this attempt is clean (no actionable warnings)
+    actionable <- unlist(lapply(attempt_warnings, function(w) {
+      any(grepl("auto.arima|unreliable|failed", w, ignore.case = TRUE))
+    }))
+
+    if (length(actionable) == 0 || !any(actionable)) {
+      # Clean fit — save results and move on
+      resolved <- TRUE
+      state_warnings_chikungunya[[st]] <- attempt_warnings
+
+      for (j in seq_along(train_ids)) {
+        write_csv(
+          pred_target[[j]],
+          file.path("sarimax/results/preds/",
+                    paste0("pred_chikungunya_", st, "_", target_ids[j], ".csv"))
+        )
+      }
+
+      preds_chikungunya_retry[[st]] <- bind_rows(pred_target, .id = "target_id") |>
+        mutate(state = st)
+
+      message(sprintf("[%s] Resolved with formula row %d: %s", st, i, best_formula))
+      resolved_formulas_chikungunya <- resolved_formulas_chikungunya |>
+        bind_rows(tibble(state = st, formula_id = best_formula, order = best_order, row = i))
+    } else {
+      message(sprintf("[%s] Formula row %d still has warnings; trying next.", st, i))
+    }
+
+    i <- i + 1
+  }
+
+  if (!resolved) {
+    message(sprintf("[%s] All %d formulas exhausted; could not resolve warnings.", st, nrow(metrics_df)))
+    state_warnings_chikungunya[[st]] <- attempt_warnings
+  }
+}
+
+write_csv(resolved_formulas_chikungunya, "sarimax/results/metrics/resolved_formulas_chikungunya.csv")
+  

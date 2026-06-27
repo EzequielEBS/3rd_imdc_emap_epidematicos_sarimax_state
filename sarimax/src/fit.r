@@ -8,7 +8,7 @@ epiweek_to_date <- function(yw) {
   jan4 <- as.Date(paste0(yr, "-01-04"))
   dow_jan4  <- as.integer(format(jan4, "%w"))  # %w: 0 = Sunday
   sunday_w1 <- jan4 - dow_jan4                 # Sunday on or before Jan 4
-  sunday_w1 + (wk - 1L) * 7L + 1
+  sunday_w1 + (wk - 1L) * 7L
 }
  
 # ── Helper: does a given year have 53 epiweeks? (MMWR/Brazilian calendar) ──
@@ -379,8 +379,8 @@ preds_chikungunya_state <- lapply(best_wis_df_chikungunya_state$state, function(
     mutate(state = st)
 })
 
-# states_to_retry_chikungunya <- names(state_warnings_chikungunya)
-states_to_retry_chikungunya <- c("DF", "MS", "RO", "SP")
+states_to_retry_chikungunya <- names(state_warnings_chikungunya)
+# states_to_retry_chikungunya <- c("DF", "MS", "RO", "SP")
 state_warnings_chikungunya <- list()
 preds_chikungunya_retry    <- list()
 resolved_formulas_chikungunya <- tibble(state = character(), formula_id = character(), order = character(), row = integer())

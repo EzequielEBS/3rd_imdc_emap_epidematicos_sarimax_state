@@ -10,10 +10,10 @@ Submission repository for the **2026 3rd Infodengue-Mosqlimate Dengue Challenge*
 
 **Contributors:**
 
-- Eduardo Adame, M.Sc. — FGV/EMAp
-- Ezequiel Braga, M.Sc. — FGV/EMAp
-- Iara Cristina, M.Sc. — FGV/EMAp
-- Isaque Pim, Ph.D. — FGV/EMAp
+- [Eduardo Adame, M.Sc. — FGV/EMAp](https://github.com/adamesalles)
+- [Ezequiel Braga, M.Sc. — FGV/EMAp](https://github.com/ezequielebs)
+- [Iara Cristina, M.Sc. — FGV/EMAp](https://github.com/iaracastro)
+- [Isaque Pim, Ph.D. — FGV/EMAp](https://github.com/isaquepim)
 
 ## 2. Repository Structure
 

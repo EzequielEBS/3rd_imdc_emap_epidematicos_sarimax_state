@@ -1,9 +1,21 @@
 source("sarimax/src/utils.r")
 
+# ── Helper: get the Sunday date opening a given YYYYWW epiweek (MMWR) ──────
+# Anchors on Jan 4, which is always in MMWR week 1.
+epiweek_to_date <- function(yw) {
+  yr   <- yw %/% 100L
+  wk   <- yw  %% 100L
+  jan4 <- as.Date(paste0(yr, "-01-04"))
+  dow_jan4  <- as.integer(format(jan4, "%w"))  # %w: 0 = Sunday
+  sunday_w1 <- jan4 - dow_jan4                 # Sunday on or before Jan 4
+  sunday_w1 + (wk - 1L) * 7L + 1
+}
+ 
 # ── Helper: does a given year have 53 epiweeks? (MMWR/Brazilian calendar) ──
+# Derived from epiweek_to_date for consistency: year has 53 weeks iff the
+# Sunday that would open week 53 falls before week 1 of the next year.
 has_53_weeks <- function(year) {
-  dec28 <- as.Date(paste0(year, "-12-28"))
-  as.integer(format(dec28, "%U")) == 53  # %U = week starting Sunday (MMWR)
+  epiweek_to_date(year * 100L + 53L) < epiweek_to_date((year + 1L) * 100L + 1L)
 }
 
 # ── Helper: enumerate all epiweeks between two YYYYWW integers ─────────────
@@ -32,35 +44,20 @@ enumerate_epiweeks <- function(start, end) {
 }
 
 # ── Helper: given YYYYWW, return the previous year's equivalent epiweek ────
-# If the previous year does not have that week (week 53 in a 52-week year),
-# shift forward by one week.
+# If the previous year does not have week 53 (52-week year), fall back to
+# week 52 of the previous year — the closest available epiweek.
 prev_year_epiweek <- function(yw) {
   yr <- yw %/% 100L
   wk <- yw  %% 100L
   prev_yr      <- yr - 1L
   prev_n_weeks <- if (has_53_weeks(prev_yr)) 53L else 52L
-
+ 
   if (wk <= prev_n_weeks) {
     list(epiweek = prev_yr * 100L + wk, adjusted = FALSE)
   } else {
-    # week 53 doesn't exist in prev year → shift to week 1 of current year
-    list(epiweek = yr * 100L + 1L, adjusted = TRUE)
+    # week 53 doesn't exist in prev year → use last week of prev year
+    list(epiweek = prev_yr * 100L + prev_n_weeks, adjusted = TRUE)
   }
-}
-
-# ── Helper: get the Sunday date opening a given YYYYWW epiweek (MMWR) ──────
-epiweek_to_date <- function(yw) {
-  yr  <- yw %/% 100L
-  wk  <- yw  %% 100L
-  # MMWR weeks start on Sunday; find the Sunday that opens week 1
-  jan1     <- as.Date(paste0(yr, "-01-01"))
-  dow_jan1 <- as.integer(format(jan1, "%w"))  # %w: 0 = Sunday
-  sunday_w1 <- if (dow_jan1 <= 3L) {
-    jan1 - dow_jan1          # back up to the opening Sunday of week 1
-  } else {
-    jan1 + (7L - dow_jan1)  # forward to the next Sunday (week 1 starts there)
-  }
-  sunday_w1 + (wk - 1L) * 7L + 1L
 }
 
 fit_sarimax <- function(data,
@@ -147,9 +144,9 @@ fit_sarimax <- function(data,
 
     xreg_train <- scale(raw_train, center = col_means, scale = col_sds)
 
-    # Look up previous-year rows by epiweek
+    # Look up previous-year rows by epiweek (vectorised, preserving order)
     prev_rows <- data[match(prev_epiweeks, data$epiweek), rhs_terms, drop = FALSE]
-
+ 
     if (any(is.na(prev_rows))) {
       missing_ew <- prev_epiweeks[apply(is.na(prev_rows), 1, any)]
       stop(
@@ -157,7 +154,7 @@ fit_sarimax <- function(data,
         paste(missing_ew, collapse = ", ")
       )
     }
-
+ 
     raw_future  <- as.matrix(prev_rows)
     xreg_future <- scale(raw_future, center = col_means, scale = col_sds)
   }

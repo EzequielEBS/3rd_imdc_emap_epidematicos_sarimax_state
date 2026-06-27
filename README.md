@@ -130,4 +130,52 @@ Variable selection is fully automated per state/disease inside `run_model_select
 
 ## 5. Model Training
 
-Each state and disease is modeled independently with 
+Each state and disease is modeled independently with `forecast::Arima()` (R package `forecast`), called through `fit_sarimax()` / `run_grid_search()` in `sarimax/src/utils.r` and orchestrated by `run_model_selection()` in `sarimax/src/model_sel.r`. The response is `log1p(cases)` (back-transformed with `expm1()` at forecast time and clipped at zero); the regressors are the PCA components / de-correlated covariate subset selected as described in Section 4, standardized using **training-split mean/SD only**.
+
+**Hyperparameter search.** For every state and disease, and for every candidate covariate formula produced by the variable-selection step, `run_grid_search()` cross-validates a grid of SARIMAX `(p,d,q)(P,D,Q)` orders bounded by `max_order` (default `p <= 2, d <= 1, q <= 2, P <= 1, D = 0, Q <= 1`, seasonal period 52 weeks), fit with `method = "CSS-ML"` and `optim.method = "BFGS"`. Each (formula, order) combination is fit on each of the four `train_i` windows and scored against the matching `target_i` window (see Section 6) using `compute_metrics()` -- Weighted Interval Score (WIS), MAE, RMSE, MAPE, and empirical interval coverage at the 50/80/90/95% levels. `run_model_selection()` ranks every combination by mean cross-validated score (WIS by default, configurable via its `metric` argument) and keeps, per state and disease, the single formula/order pair with the lowest mean score. The full ranking is written to `sarimax/results/metrics/metrics_all_formulas_<disease>_<state>.csv`; the winners (one row per state) are written to `sarimax/results/metrics/best_wis_<disease>_all_states.csv` and are what `sarimax/src/fit.r` reads to know which formula/order to refit.
+
+**Where the code lives and how to run it.** From the repository root, after the data-prep pipeline (Section 4) has produced `processed_data/<disease>/<disease>_<UF>_agg.csv.gz` for every state:
+
+```r
+# 1. Training / model selection for every state (and a few focal cities), both
+#    diseases. Long-running (grid search x 26 states x 2 diseases). Safe to
+#    interrupt and re-run: finished states are skipped via
+#    results/concluded_states_*.csv.
+source("sarimax/src/model_sel.r")
+
+# 2. Refit the winning formula/order per state on all 4 train/target windows
+#    and write one forecast CSV per state x window to results/preds/.
+source("sarimax/src/fit.r")
+
+# 3. Submit the forecasts to the Mosqlimate Predictions Registry.
+source("sarimax/src/sub_pred.r")
+```
+
+See `sarimax/README.md` for a file-by-file breakdown and for instructions on calling `run_model_selection()` directly on a single state instead of running the full loop.
+
+## 6. Data Usage Restriction
+
+The IMDC rules require that the submission forecast -- covering EW41 of the current year through EW40 of the next year -- be produced using only data available up to EW25 of the current year. This repository encodes that rule directly in the data rather than leaving it to be remembered at modeling time: every `processed_data/<disease>/<disease>_<UF>_agg.csv.gz` file carries four pairs of boolean columns, `train_1..train_4` and `target_1..target_4` (supplied upstream by the Mosqlimate/Infodengue data feed and carried through unchanged by `data_prep/agg_data_uf.r`):
+
+- **`train_1`-`train_3` / `target_1`-`target_3`** are three retrospective backtest windows. They exist purely to cross-validate the modeling pipeline against past seasons (this is what Section 5's grid search scores models on) and carry no submission-window restriction of their own -- the "future" data in these splits is already historical.
+- **`train_4` / `target_4`** is the actual submission window, and the one the EW25->EW41/EW40 rule applies to. Empirically (verified directly against `processed_data/dengue/dengue_SP_agg.csv.gz`), `train_4` is `TRUE` for every epiweek up to and including EW25 of the current season, and `target_4` is `TRUE` for EW41 of the current year through EW40 of the next year -- exactly the window the challenge requires forecasts for, mapped from exactly the cutoff the challenge allows.
+
+`fit_sarimax_epiweek()` (`sarimax/src/fit.r`) is the function used specifically for the `train_4`/`target_4` window (see the `if (train_id == "train_4")` branches in the dengue and chikungunya prediction loops near the bottom of `fit.r`, where it is called with `train_start`/`train_end` bounding the data through EW25 and `forecast_start = 202541`, `forecast_end = 202640` for the current run). Two mechanisms keep this leak-free:
+
+1. **No future case data.** It fits `Arima()` only on `data[epiweek >= train_start & epiweek <= train_end, ]` -- rows after EW25 are never passed to the model, so no future case counts can influence the fit.
+2. **No future covariate data.** The forecast horizon extends past the last epiweek for which real weather/ocean-index values exist (they haven't happened yet). Rather than requiring those unobserved values, `fit_sarimax_epiweek()` substitutes, for each forecast epiweek, that same epiweek number's value from **the previous year** (via the helper `prev_year_epiweek()`, which also handles the 52-vs-53-week-year edge case) as a seasonal-naive stand-in. This is a deliberate, documented modeling assumption appropriate for strongly seasonal climate variables -- not a leak, since the substituted value is itself historical data that was already available well before EW25.
+
+## 7. Predictive Uncertainty
+
+Prediction intervals come from `forecast::forecast()`'s bootstrap-simulation path (`bootstrap = TRUE`, `npaths = 1000`, set in both `fit_sarimax()` in `sarimax/src/utils.r` and `fit_sarimax_epiweek()` in `sarimax/src/fit.r`) rather than the default Gaussian/normal-theory intervals: 1,000 forecast paths are simulated from the fitted SARIMAX model and empirical quantiles of those paths are taken as the interval bounds. This is more robust to the non-normality introduced by the `log1p`/`expm1` response transform than a Gaussian approximation would be. Intervals are produced at four nominal coverage levels -- 50%, 80%, 90%, and 95% (the `levels` argument, default `c(50, 80, 90, 95)`) -- and reported as `lower_<level>`/`upper_<level>` columns alongside the point forecast `pred` in every `sarimax/results/preds/pred_<disease>_<UF>_target_<n>.csv` file; all bounds are clipped at zero after back-transforming with `expm1()`.
+
+Interval calibration is checked, not just assumed: `compute_metrics()` (`sarimax/src/utils.r`) computes empirical coverage at each of the four levels (the fraction of held-out `target_i` observations that actually fall inside the predicted interval) every time a candidate model is cross-validated. Critically, model selection (Section 5) ranks candidates by mean Weighted Interval Score rather than by point-forecast error alone -- WIS is a proper score that rewards sharp *and* well-calibrated intervals simultaneously (see Reference 1 below), so the chosen model per state/disease is selected for probabilistic quality, not just point accuracy.
+
+## 8. References
+
+This submission does not implement one specific previously published forecasting method; it is a per-state/disease SARIMAX pipeline built on the `forecast` R package, with cross-validated covariate selection and Weighted-Interval-Score-based model ranking. The following works underpin the modeling methodology and the data/evaluation/submission infrastructure this repository builds on:
+
+1. Hyndman, R. J., & Khandakar, Y. (2008). Automatic time series forecasting: the forecast package for R. *Journal of Statistical Software*, 27(3), 1-22. https://doi.org/10.18637/jss.v027.i03 -- the `forecast` package providing `Arima()`/`forecast()`, the SARIMAX fitting and bootstrap-interval engine used throughout `sarimax/src/`.
+2. Bracher, J., Ray, E. L., Gneiting, T., & Reich, N. G. (2021). Evaluating epidemic forecasts in an interval format. *PLOS Computational Biology*, 17(2), e1008618. https://doi.org/10.1371/journal.pcbi.1008618 -- defines the Weighted Interval Score that `compute_metrics()` and `run_model_selection()` use to rank candidate models and assess interval calibration (Sections 5 and 7).
+3. Ganem, F., et al. (2024). Mosqlimate: a platform to providing automatable access to data and forecasting models for arbovirus disease. *arXiv:2410.18945*. https://arxiv.org/abs/2410.18945 -- describes the Mosqlimate data store and Predictions Registry that `raw_data/` originates from and that `sarimax/src/sub_pred.r` submits forecasts to (via the `mosqlient` package).
+4. Araujo, E. C., Carvalho, L. M., Ganem, F., Coelho, F. C., et al. (2025). Leveraging probabilistic forecasts for dengue preparedness and control: the 2024 Dengue Forecasting Sprint in Brazil. *medRxiv* 2025.05.12.25327419. https://doi.org/10.1101/2025.05.12.25327419 -- reports on the first edition of the Infodengue-Mosqlimate Dengue Challenge that this repository's submission (the 3rd edition) continues.

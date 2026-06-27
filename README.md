@@ -1,177 +1,133 @@
-<p align="center">
-  <img src="img/home_imdc.svg" alt="Sprint Planning" width="800" height="200">
-</p>
+# 3rd Infodengue-Mosqlimate Dengue Challenge (IMDC) 2026 — State-level SARIMAX
 
+Submission repository for the **2026 3rd Infodengue-Mosqlimate Dengue Challenge**: state-level (UF) weekly probable-case forecasts for **dengue** and **chikungunya** in Brazil, produced with SARIMAX models fit per state.
 
-This tutorial provides step-by-step guidance on how to participate in the challenge. We assume here that you are already familiar with GitHub and how to use it. If you're not, please take a look at [this tutorial](https://docs.github.com/en/get-started/start-your-journey/hello-world).
+## 1. Team and Contributors
 
-## Registering in the Mosqlimate Platform
-The Mosqlimate platform is where all models and predictions are stored, alongside with the data used for the modeling. It provides a [REST API](https://api.mosqlimate.org/api/docs) that is completely language agnostic, for accessing the data as well as registering models. It is fully documented but requires some familiarity with APIs to use. In addition, we make available a a simplified client library named [Mosqlient library](https://github.com/Mosqlimate-project/mosqlimate-client), available for Python and R (using `reticulate`), that simplifies the interaction with the platform.
+**Team:** Epidemáticos
 
-The Mosqlimate Platform is responsible for all interactions with the the participants of the challenge. Therefore, to participate in this IMDC, the first step we require from you, as team leader, is to register your team to the Mosqlimate platform (There is not cost associate with this membership). In order to do this, simply go to [mosqlimate.org](https://mosqlimate.org/), click on the "Login" in the top right corner of the page, and follow the instructions. Please use your GitHub or GitLab account to create your platform account. Otherwise, you will not be able to register your model, as it must be linked to a repository in your GitHub or GitLab account. Once you create your Mosqlimate profile, you are set to follow the steps below.
+**Affiliation:** School of Applied Mathematics, Fundação Getulio Vargas (FGV/EMAp), Rio de Janeiro, Brazil
 
-![image](img/profile_page.png)
+**Contributors:**
 
-After creating your account, go to the “Auth” section to verify whether it is linked to GitHub or GitLab. This step is required in order to register your model.
+- Eduardo Adame, M.Sc. — FGV/EMAp
+- Ezequiel Braga, M.Sc. — FGV/EMAp
+- Iara Cristina, M.Sc. — FGV/EMAp
+- Isaque Pim, Ph.D. — FGV/EMAp
 
-![image](img/git_connect.png)
+## 2. Repository Structure
 
-This section also displays your API key. You need it to download data using the API or submit forecasts to the platform.
-
-You can access the challenge data via the API. However, note that the IMDC forecasts are based on probable cases; therefore, when using the API, you should use the `casprov` column from the Infodengue endpoint. **To simplify access to nationwide data and provide additional datasets, the data is also available on an FTP server. More details can be found [here](https://sprint.mosqlimate.org/data/).**
-
-
-Now let's move on to setting up the GitHub repository for your submission.
-
-## Using the GitHub template for the IMDC submission
-This github repository should be used as a template for developing your submission for the 2026 IMDC. To get the details about the challenge, please read carefully [IMDC rules](https://sprint.mosqlimate.org/instructions/).
-
-If you have a GitHub account, you can create a new public repository clicking the (+) button on the top right of this page. In the following page, you can create the repo under your user as shown below, make sure to use our template as indicated by the red arrow in the figure below.
-
- <span style="color:red"><strong>You should name your repository following this pattern: 3rd_imdc_{institution}_{team_name}
-* All letters must be lowercase.
-* In {institution}, include only the acronym of the team leader’s institution.
-* In {team_name}, you may choose any name you like, but it must contain only lowercase letters </strong></span>!
-
-![create repo](/img/create_repo.png)
-
-
-> <strong> Important: </strong>Don't forget to set it as a public repository. In addition, please ensure your model repository includes a clear and complete `README.md` file containing the following information:
->
-> <strong> 1. Team and Contributors</strong> 
->* Name of your team.
->* Names of all contributors and their affiliations >(universities/institutions, if applicable).
->
->
-><strong> 2. Repository Structure </strong>
->
->A brief description of the contents and purpose of >each folder and file in the repository.
->
-><strong> 3. Libraries and Dependencies </strong>
->
->A list of all libraries and packages used to process the data and train your model.
->
-><strong> 4. Data and Variables </strong>
->
->* Which datasets and variables were used?
->* How was the data pre-processed?
->* How were the variables selected? Please point to the relevant part of the code.
->
-><strong>5. Model Training </strong> 
->
->* Description of how the model was trained. If applicable, describe any hyperparameter optimization techniques used.
->
->* Please specify where the code for training and generating forecasts is located, and provide instructions on how to run it.
->
-><strong> 5. Data Usage Restriction </strong>
->
->Describe how you handled the requirement of using only data up to EW 25 of the current year to generate predictions from EW 41 of the same year to EW 40 of the next year.
->
-><strong> 6. Predictive Uncertainty </strong> 
-How are your prediction intervals computed? 
->
-><strong> 7. References </strong>
->
->If your model is based on a published or preprint (e.g., arXiv) paper, include the citation, DOI, and link.
->
-><strong> An illustrative example from the previous edition is available [here](https://mosqlimate.org/davibarreira/jbd-mosqlimate-sprint).</strong>
-
-
-## Step-by-step tutorial on how to register your model
-
-Now that your repository is set up, and after providing the required information about your model in the repository README, make sure that all code related to your model is committed to it. <span style="color:red"><strong>If you want to register more than one model, be sure to repeat the step above for each one, so that they are in separate repositories.</strong></span> The video tutorial for model submission is available [here](https://www.youtube.com/watch?v=0K3RfJhOYyM&list=PLh4FLfhFN5irN_IoZvy4c3cf4ZWrSWrwF&index=4).
-
-The model is registered through the platform’s interface. The first step, assuming you are already logged into the platform, is to click on the `Models` section in the navigation bar. This section is indicated by the arrow in the figure below:
-
-![](/img/step1_sub_model.png)
-
-Next, you will be directed to a page displaying all models registered on the platform. To register a new model, simply click the green `+ Models` button indicated by the arrow in the figure below:
-
-![](/img/step2_sub_model.png)
-
-After clicking it, a new tab will open showing a list of your GitHub/GitLab repositories.
-
-If you have not connected your GitHub/GitLab account correctly, a message will appear indicating that you need to complete the connection. In this case, simply follow the instructions provided.
-
-![](/img/step3_sub_model_p1.png)
-
-If your GitHub/GitLab account is already connected, the screen below will appear with a list of your repositories. Locate the repository containing your model’s code. When you hover over it, a blue arrow pointing to the right will appear, indicating that it can be selected. Click on it to proceed to the next step.
-
-![](/img/step3_sub_model_p2.png)
-
-In this step, fill the temporal resolution (field `time resolution`) and select the category (field `model_category`) that best describes your model’s methodology. Models for the challenge **must have a weekly temporal resolution**. Finally, indicate that your model will participate in IMDC 2026 and click continue.
-
-![](/img/step4_sub_model.png)
-
-The next page allows you to review the information provided. If everything is correct, simply click `Confirm`.
-
-**Done! Your model has been successfully submitted. ;)**
-
-After submission, the README from your repository will appear in the README section of model page, as shown in the figure below:
-
-![](/img/view_readme_from_model.png)
-
-The predictions section will initially be empty, as shown below. In the next step, you will learn how to submit forecasts for your model using Python or R.
-
-![](/img/view_predictions_from_model.png)
-
-## Step-by-step tutorial on how to prepare your submission
-
-This guide walks you through how to format and submit your forecasting models to the API. You can send your data either as a standard JSON payload or by using the official Python package (**recommended**).
-
-Below, we provide examples using the `mosqlient` package. For details on submitting data via the standard JSON payload, see the documentation [here](https://api.mosqlimate.org/docs/registry/POST/predictions/). 
-
-### Using `mosqlient package`: 
-
-**Checking for minimal configuration requirements on your operating system**
-
-Since you are going to use a python library to submit your work, before installing it you need to make sure that you OS has a working Python installation.
-
-On a debian-based Linux distribution(Ubuntu, Mint, etc.), just run the following command:
-
-```bash
-sudo apt install python3-dev jupyter python3-venv python3-pip
+```
+.
+├── README.md                   # this file
+├── LICENSE                     # GNU GPLv3
+├── pyproject.toml              # Python dependencies (Poetry), used only by sub_pred.r via reticulate
+├── .gitattributes              # marks *.csv / *.gz as Git LFS objects
+├── .gitignore
+│
+├── data_prep/                  # data preparation pipeline (R), run in this order
+│   ├── prep_climate.r              # 1. fills climate gaps for island municipalities
+│   ├── merge_dengue.r               # 2a. joins raw dengue cases with climate/env/ocean/population covariates
+│   ├── merge_chikungunya.r          # 2b. same as above, for chikungunya
+│   ├── handle_na.r                  # 3. interpolates missing ENSO/IOD/PDO values
+│   ├── agg_data_uf.r                # 4. aggregates city-level data to state (UF) level + lag/rolling features
+│   ├── sel_cities.r                 # optional: extracts a few focal cities for diagnostics
+│   ├── summarise_sel_cities.r       # placeholder, currently empty / unused
+│   └── README.md                    # details on each script above
+│
+├── raw_data/                   # original input datasets (Git LFS)
+│   ├── dengue.csv.gz, chikungunya.csv.gz        # case counts by geocode/epiweek + train/target split flags
+│   ├── climate.csv.gz                            # weather variables by geocode/epiweek
+│   ├── environ_vars.csv.gz                       # Köppen climate classification, biome (static, by geocode)
+│   ├── ocean_climate_oscillations.csv.gz         # ENSO, IOD, PDO indices by epiweek (national scale)
+│   ├── datasus_population_2001_2025.csv.gz       # DATASUS population by geocode/year
+│   ├── map_regional_health.csv                   # geocode → regional/macroregional health mapping
+│   ├── shape_muni.gpkg, shape_regional_health.gpkg, shape_macroregional_health.gpkg  # spatial boundaries (currently unused as model inputs)
+│   └── forecasting_climate.csv.gz                # forecasted climate variables (currently unused by the pipeline)
+│
+├── processed_data/              # output of data_prep/ — the modeling-ready tables
+│   ├── climate/climate.csv.gz
+│   ├── dengue/
+│   │   ├── dengue_merged.csv.gz             # city-level, all covariates merged
+│   │   ├── dengue_<UF>_agg.csv.gz           # one file per state — read directly by the SARIMAX scripts
+│   │   └── sel_cities/                      # focal-city extracts (diagnostics only)
+│   └── chikungunya/                         # same structure as dengue/
+│
+└── sarimax/                     # modeling code and results
+    ├── README.md                            # modeling workflow and how-to-run instructions
+    ├── src/
+    │   ├── utils.r                          # shared helpers: fitting, covariate selection, metrics, PCA
+    │   ├── model_sel.r                      # cross-validated covariate + SARIMAX-order selection (training)
+    │   ├── fit.r                            # refits the best model per state and generates forecasts
+    │   └── sub_pred.r                       # uploads forecasts to the Mosqlimate platform
+    └── results/
+        ├── concluded_states_dengue.csv, concluded_states_chikungunya.csv  # resumability checkpoints
+        ├── metrics/                          # per-state/disease CV metrics, incl. best_wis_*_all_states.csv
+        └── preds/                            # final forecast CSVs, one per state x target window
 ```
 
-On Mac OS (using homebrew):
-```
-# Install Python and Jupyter
-brew install python
-pip3 install jupyter
+## 3. Libraries and Dependencies
 
-# Install virtual environment and development headers
-pip3 install virtualenv
-```
+**R** (used throughout `data_prep/` and `sarimax/src/`):
 
-**Installing the Mosqlient library**
+| Package | Used for |
+|---|---|
+| `tidyverse` (`dplyr`, `tidyr`, `purrr`, `readr`) | data wrangling |
+| `lubridate`, `aweek` | date and epiweek handling |
+| `zoo` | linear interpolation of missing ocean-climate index values |
+| `runner` | rolling-window (3/6/9/12-month) covariate means |
+| `sf`, `geobr` | municipality geometries/centroids, used to gap-fill island climate data |
+| `forecast` | `Arima()` / `forecast()` — the SARIMAX engine |
+| `scoringutils` | Weighted Interval Score (WIS) and interval-coverage scoring |
+| `parallel`, `pbapply` | parallelized, progress-tracked grid search |
+| `reticulate`, `data.table` | Python interop and fast I/O for the submission step |
+| `dotenv` | loads the Mosqlimate API key from a local `.env` file (never hardcoded) |
 
-To install the library for Python, from the OS terminal type: 
+**Python** (declared in `pyproject.toml`, only used via `reticulate` in `sarimax/src/sub_pred.r` to submit forecasts):
 
-```bash
-$ pip install -U mosqlient
-```
+- `python = ">=3.10,<3.13"`
+- `mosqlient==1.5.2` — Mosqlimate Predictions Registry client
+- `epiweeks`, `python-dotenv`
+- `jupyter`, `pmdarima` are declared but not currently invoked anywhere in this repository's code path — they are leftovers from the challenge template and can be removed if unused in your own workflow.
 
-Ensure your Python version is 3.10 or higher to install the latest version of the package (2.1).
+Install the R packages with, e.g., `install.packages(c("tidyverse","lubridate","aweek","zoo","runner","sf","geobr","forecast","scoringutils","pbapply","reticulate","data.table","dotenv"))`, and the Python side with `poetry install` (or `pip install mosqlient==1.5.2 epiweeks python-dotenv`).
 
-for R:
+## 4. Data and Variables
 
-```R
-> library(reticulate)
-> py_install("mosqlient")
-```
+### Datasets
 
-You need to already have the `reticulate` package installed.
+All disease and most covariate data are distributed by the Mosqlimate platform (Infodengue feed, probable cases — the `casprov`/`target_*` columns already reflect this); population comes from DATASUS.
 
-**Starting your work!**
-We prepared a couple of demo Jupyter notebooks to get you started.  In you local computer make sure you have Python 3.10 or higher and Jupyter installed.
+- **Case data** — `raw_data/dengue.csv.gz`, `raw_data/chikungunya.csv.gz`: weekly probable case counts by municipality (`geocode`) and `epiweek`, with the official `train_1..4` / `target_1..4` split indicators used for both retrospective validation and the real submission (see Section 6).
+- **Climate** — `raw_data/climate.csv.gz`: minimum/mean/maximum temperature, precipitation, atmospheric pressure, relative humidity, thermal range, and rainy-day count, by municipality and epiweek.
+- **Environmental attributes** — `raw_data/environ_vars.csv.gz`: Köppen climate classification and biome, static per municipality.
+- **Ocean-climate indices** — `raw_data/ocean_climate_oscillations.csv.gz`: ENSO, IOD, and PDO, indexed by epiweek (national scale, not municipality-specific).
+- **Population** — `raw_data/datasus_population_2001_2025.csv.gz`: municipality population by year (2026 obtained by carrying the 2025 value forward — see `data_prep/merge_dengue.r`).
+- **Regional-health mapping and shapefiles** — `raw_data/map_regional_health.csv` and the `shape_*.gpkg` files are read in by the merge scripts / available for spatial work but are **not** used as direct model covariates in the current pipeline; `sf`/`geobr` are used only in `data_prep/prep_climate.r` to fill climate gaps for island municipalities by borrowing their nearest mainland neighbor's series.
+- `raw_data/forecasting_climate.csv.gz` is included but currently unused by any script.
 
-If you are an R user, make sure you have the R kernel installed in your Jupyter notebook. you can install it by running the following command **in an R terminal**:
+### Pre-processing
 
-```R
-> install.packages("IRkernel")
-> IRkernel::installspec()
-```
+Implemented in `data_prep/` (see `data_prep/README.md` for full detail), in order:
 
-After this you can just open the notebooks indicated below and follow the instructions in them.
+1. `prep_climate.r` — fills missing climate series for island municipalities.
+2. `merge_dengue.r` / `merge_chikungunya.r` — left-joins case data with climate, environmental, ocean-climate, and population covariates.
+3. `handle_na.r` — linearly interpolates the remaining gaps in ENSO/IOD/PDO.
+4. `agg_data_uf.r` — sums cases and averages weather covariates from city to state (UF) level, and engineers 4/8/12/16-week lagged and 3/6/9/12-month rolling-mean versions of every weather covariate. Writes the final `processed_data/<disease>/<disease>_<UF>_agg.csv.gz` files used for modeling. Espírito Santo (ES) is excluded.
 
-Follow the [R demo rmd](/Demo%20Notebooks/R%20demo.Rmd) or [Python demo notebook](/Demo%20Notebooks/Python%20demo.ipynb) to learn of the essential steps you must follow to complete a submission of your work. For more details check the [mosqlient documentation](https://mosqlimate-client.readthedocs.io/en/latest/tutorials/API/registry/).  Video tutorials for prediction submission are available here: one for [R](https://www.youtube.com/watch?v=57hM-dVY4hA&list=PLh4FLfhFN5irN_IoZvy4c3cf4ZWrSWrwF&index=3) and another for [Python](https://www.youtube.com/watch?v=YorYQ6phAfw&list=PLh4FLfhFN5irN_IoZvy4c3cf4ZWrSWrwF&index=2). If you run into dificulties, please reach out fo help at our [discord server](https://discord.gg/yqtgW4TC). 
+Inside model fitting itself, covariates are additionally standardized (z-scored) using the **training split's mean/SD only**, to avoid leaking information from the forecast window into the scaling — see `fit_sarimax()` in `sarimax/src/utils.r` (around the "Build & standardize regressor matrices" step) and `fit_sarimax_epiweek()` in `sarimax/src/fit.r`.
+
+### Variable selection
+
+Variable selection is fully automated per state/disease inside `run_model_selection()` (`sarimax/src/model_sel.r`), using only training-split rows at every filtering step to avoid leakage:
+
+1. **`get_candidates()`** (`sarimax/src/utils.r`) enumerates the contemporaneous, lagged, and rolling-mean versions of the 8 base covariates (`temp_med_mean`, `precip_med_mean`, `rel_humid_med_mean`, `thermal_range_mean`, `rainy_days_mean`, `enso`, `iod`, `pdo`).
+2. **`filter_low_variance()`** drops near-constant covariates (SD below a threshold).
+3. **`filter_by_correlation()`** drops covariates whose absolute correlation with `log1p(cases)` is below a minimum threshold.
+4. **Dimensionality reduction** — by default (`pca = TRUE`): **`pca_all()`** reduces the surviving local-weather covariates to the smallest number of principal components that explain ≥ 90% of variance in the most restrictive of the four CV folds. ENSO/IOD/PDO are deliberately excluded from the PCA and tested separately with **`filter_redundant_indices()`**, which keeps an index only if it still correlates with the response after the local-weather PCs' linear effect is removed — so ocean-climate signal isn't silently absorbed (or discarded) by the PCA. Candidate formulas use the leading 1..k PCs, with and without the surviving indices.
+   An alternative, non-PCA path (`pca = FALSE`) is also implemented: **`select_best_per_variable()`** keeps only the best lag/rolling version of each base variable, and **`build_covariate_combinations()`** enumerates de-correlated covariate subsets (pairwise |correlation| below a threshold) up to a maximum size, from which a random sample is grid-searched.
+5. **`run_grid_search()`** (`sarimax/src/utils.r`) cross-validates every candidate formula against a grid of SARIMAX `(p,d,q)(P,D,Q)` orders across the four train/target splits, and **`run_model_selection()`** picks the formula/order combination with the lowest mean cross-validated score (WIS by default).
+
+## 5. Model Training
+
+Each state and disease is modeled independently with 

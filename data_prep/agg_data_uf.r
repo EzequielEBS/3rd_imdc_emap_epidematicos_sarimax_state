@@ -1,14 +1,42 @@
+# agg_data_uf.r — Step 4 of the data-prep pipeline: city → state aggregation
+# and feature engineering.
+#
+# This is the script that actually produces the modeling-ready tables
+# consumed by sarimax/src/*.r. For each disease it: (1) sums case counts and
+# averages weather covariates from city/geocode level up to state (uf)
+# level; (2) creates lagged (4/8/12/16-week) and rolling-mean
+# (3/6/9/12-month) versions of every weather covariate, to let the SARIMAX
+# models use past climate as a leading indicator of future transmission;
+# and (3) writes one CSV per state to processed_data/<disease>/<disease>_<uf>_agg.csv.gz
+# (the files read by model_sel.r and fit.r). Espírito Santo (ES) is
+# excluded from the state-level outputs.
+#
+# Run after data_prep/handle_na.r. This is the last data-prep step before
+# modeling.
 library(tidyverse)
 library(runner)
 
 dengue_merged <- read_csv("processed_data/dengue/dengue_merged.csv.gz")
 chikungunya_merged <- read_csv("processed_data/chikungunya/chikungunya_merged.csv.gz")
 
+#' Most frequent value in a vector (statistical mode)
+#'
+#' Used to aggregate the categorical Köppen climate classification and biome
+#' columns from city level up to a single representative state-level value
+#' (the most common category among that state's cities).
+#'
+#' @param x A vector (typically character/factor).
+#' @return The single most frequent value in `x`.
 mode_stat <- function(x) {
   ux <- unique(x)
   ux[which.max(tabulate(match(x, ux)))]
 }
 
+# ── Aggregate dengue from city to state level ──────────────────────────────
+# Cases are summed across cities; weather covariates are averaged; the
+# categorical Köppen/biome columns use mode_stat(); ocean-climate indices,
+# population, year and the train/target indicators are constant within a
+# state/epiweek so first() simply picks them up unchanged.
 dengue_uf <- dengue_merged %>%
   group_by(uf, uf_code, date, epiweek) %>%
   summarise(
@@ -45,6 +73,7 @@ dengue_uf <- dengue_merged %>%
   ) %>%
   ungroup()
 
+# ── Aggregate chikungunya from city to state level (mirrors dengue above) ──
 chikungunya_uf <- chikungunya_merged %>%
   group_by(uf, uf_code, date, epiweek) %>%
   summarise(
@@ -132,48 +161,4 @@ dengue_uf <- dengue_uf %>%
       list(
         # Calculates the mean of the previous 12 weeks
         mean_3mo = ~ dplyr::lag(mean_run(., k = 12, na_rm = TRUE), default = first(.)),
-        mean_6mo = ~ dplyr::lag(mean_run(., k = 24, na_rm = TRUE), default = first(.)),
-        mean_9mo = ~ dplyr::lag(mean_run(., k = 36, na_rm = TRUE), default = first(.)),
-        mean_12mo = ~ dplyr::lag(mean_run(., k = 48, na_rm = TRUE), default = first(.))
-      ),
-      .names = "{col}_{fn}"
-    )
-  ) %>%
-  ungroup()
-
-chikungunya_uf <- chikungunya_uf %>%
-  arrange(epiweek) %>%
-  group_by(uf) %>%
-  mutate(
-    across(
-      c(temp_min_mean, temp_med_mean, temp_max_mean, precip_min_mean, precip_med_mean, precip_max_mean,
-        pressure_min_mean, pressure_med_mean, pressure_max_mean, rel_humid_min_mean,
-        rel_humid_med_mean, rel_humid_max_mean, thermal_range_mean, rainy_days_mean),
-      list(
-        # Calculates the mean of the previous 12 weeks
-        mean_3mo = ~ dplyr::lag(mean_run(., k = 12, na_rm = TRUE), default = first(.)),
-        mean_6mo = ~ dplyr::lag(mean_run(., k = 24, na_rm = TRUE), default = first(.)),
-        mean_9mo = ~ dplyr::lag(mean_run(., k = 36, na_rm = TRUE), default = first(.)),
-        mean_12mo = ~ dplyr::lag(mean_run(., k = 48, na_rm = TRUE), default = first(.))
-      ),
-      .names = "{col}_{fn}"
-    )
-  ) %>%
-  ungroup()
-
-
-# count NAs by column
-na_counts_dengue <- sapply(dengue_uf, function(x) sum(is.na(x)))
-na_counts_chikungunya <- sapply(chikungunya_uf, function(x) sum(is.na(x)))
-
-lapply(unique(dengue_uf$uf), function(uf) {
-  if (uf == "ES") {
-    return()  # Skip ES
-  }
-  dengue_uf %>%
-    filter(uf == !!uf) %>%
-    write_csv(paste0("processed_data/dengue/dengue_", uf, "_agg.csv.gz"))
-  chikungunya_uf %>%
-    filter(uf == !!uf) %>%
-    write_csv(paste0("processed_data/chikungunya/chikungunya_", uf, "_agg.csv.gz"))
-})
+        

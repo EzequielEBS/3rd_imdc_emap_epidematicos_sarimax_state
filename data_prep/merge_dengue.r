@@ -1,3 +1,14 @@
+# merge_dengue.r — Step 2 of the data-prep pipeline (dengue branch).
+#
+# Joins the raw dengue case series (geocode x epiweek, with train/target
+# split indicators already provided by Mosqlimate) against climate,
+# environmental (Köppen climate classification, biome), ocean-climate index
+# (ENSO/IOD/PDO), and population covariates. Population is extrapolated one
+# year forward (to 2026) by repeating each geocode's 2025 value, since
+# official population estimates lag the current year. Writes
+# processed_data/dengue/dengue_merged.csv.gz.
+#
+# Run after prep_climate.r; followed by data_prep/handle_na.r.
 library(tidyverse)
 library(lubridate)
 library(aweek)
@@ -9,7 +20,8 @@ ocean <- read_csv("raw_data/ocean_climate_oscillations.csv.gz")
 pop <- read_csv("raw_data/datasus_population_2001_2025.csv.gz")
 map_regional_health <- read_csv("raw_data/map_regional_health.csv")
 
-# Prepare data to merge
+# Prepare data to merge: derive join keys and drop columns that would
+# otherwise collide across tables (each table keeps only one `date`).
 dengue <- dengue %>%
   mutate(year = year(date))
 climate <- climate |> dplyr::select(-date)
@@ -18,30 +30,5 @@ ocean <- ocean %>%
     epiweek = as.integer(
       paste0(epiyear(date), sprintf("%02d", epiweek(date)))
     )
-  ) |> 
-  dplyr::select(-date)
-pop <- rbind(
-  pop,
-  lapply(unique(pop$geocode), function(code) {
-    data.frame(
-      geocode = code,
-      year = 2026,
-      population = pop$population[pop$geocode == code & pop$year == 2025]
-    )
-  }) %>% bind_rows()
-)
-
-# Merge data
-dengue_merged <- dengue %>%
-  left_join(climate, by = c("epiweek", "geocode")) %>%
-  left_join(env_vars, by = c("geocode", "uf_code")) %>%
-  left_join(ocean, by = "epiweek") %>%
-  left_join(pop, by = c("geocode", "year"))
-
-# Count NAs by column
-na_counts <- sapply(dengue_merged, function(x) sum(is.na(x)))
-
-if (!dir.exists("processed_data/dengue")) {
-  dir.create("processed_data/dengue")
-}
-write_csv(dengue_merged, "processed_data/dengue/dengue_merged.csv.gz")
+  ) |>
+  dplyr::select(-

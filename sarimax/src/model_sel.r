@@ -1,5 +1,83 @@
+#' model_sel.r — Cross-validated covariate and SARIMAX-order selection
+#'
+#' Orchestrates the full model-selection pipeline (covariate screening →
+#' dimensionality reduction → grid search → best-model evaluation) for every
+#' state (and, in the driver code at the bottom of this file, every
+#' selected city) and disease. Outputs are written to `sarimax/results/`:
+#' one `metrics_all_formulas_<disease>_<state>.csv` per state/disease
+#' (every formula x order combination tried, ranked by mean CV metric) and
+#' a `best_wis_<disease>_all_states.csv` summary used downstream by
+#' `fit.r` to refit the winning model and generate the submission forecasts.
 source("sarimax/src/utils.r")
 
+#' Select the best covariate set and SARIMAX order for one state or city
+#'
+#' For the given disease's aggregated table, this: (1) lists candidate
+#' covariates with `get_candidates()`; (2) drops near-constant
+#' (`filter_low_variance()`) and weakly-correlated
+#' (`filter_by_correlation()`) ones, using only `train_1` rows to avoid
+#' leakage; (3) either reduces the remainder to a handful of PCA components
+#' (`pca_all()`, re-testing ocean-climate indices with
+#' `filter_redundant_indices()`) when `pca = TRUE`, or falls back to an
+#' explicit, de-correlated combinatorial search
+#' (`select_best_per_variable()` + `build_covariate_combinations()`) when
+#' `pca = FALSE`; (4) runs `run_grid_search()` over the resulting formulas
+#' and a grid of SARIMAX orders, scored by cross-validated `metric` (WIS by
+#' default) across the four train/target splits; and (5) refits the overall
+#' best formula/order combination to report final per-split metrics. Skips
+#' states/cities already present in `concluded_states`/`concluded_cities` so
+#' a long run can be safely resumed.
+#'
+#' @param state, city                Exactly one should be supplied: a UF
+#'                                    code (state-level) or an IBGE geocode
+#'                                    (city-level) to process.
+#' @param concluded_states, concluded_cities  Data frames of already-
+#'                                    processed state/city codes, used to
+#'                                    skip work that's already done.
+#' @param disease                    "dengue" or "chikungunya"; selects
+#'                                    which `processed_data/<disease>/...`
+#'                                    file to read.
+#' @param metric                     Column name in the metrics tibble used
+#'                                    to rank formula x order combinations
+#'                                    (default "wis", giving `mean_wis`).
+#' @param sample_size                When `pca = FALSE`, number of covariate
+#'                                    combinations to randomly sample for the
+#'                                    grid search (full combinatorial search
+#'                                    is otherwise too large).
+#' @param threshold_low_variance, threshold_cor, min_cor  Thresholds passed
+#'                                    to `filter_low_variance()`,
+#'                                    `build_covariate_combinations()`, and
+#'                                    `filter_by_correlation()` respectively.
+#' @param max_size_covariates        Max covariates per combination when
+#'                                    `pca = FALSE`.
+#' @param levels                     Prediction-interval coverage levels
+#'                                    (percent) used throughout.
+#' @param max_order                  Upper bound on each SARIMAX order
+#'                                    component for the grid search.
+#' @param n_cores                    Parallel workers for `run_grid_search()`.
+#' @param method, lambda             Passed to `forecast::Arima()`.
+#' @param pca, pca_var_threshold, k  Whether to use PCA for dimensionality
+#'                                    reduction, the variance threshold for
+#'                                    choosing the number of components, and
+#'                                    the max number of leading PCs to try
+#'                                    (formulas are built for 1..k PCs).
+#' @param index_cor_threshold        Passed to `filter_redundant_indices()`.
+#' @param fixed_stat_par             If TRUE, lock d/D to the
+#'                                    `determine_d()` recommendation instead
+#'                                    of searching them in the order grid.
+#' @param bootstrap, npaths          Passed to `fit_sarimax()` /
+#'                                    `run_grid_search()` for simulation-based
+#'                                    prediction intervals.
+#' @param concluded_states_path, concluded_cities_path  Checkpoint files to
+#'                                    append to after a successful run
+#'                                    (overridable so test runs don't touch
+#'                                    the real checkpoint).
+#'
+#' @return A list with `best_order`, `best_formula`, `best_pred` (predictions
+#'   for the winning formula/order), `final_metrics` (per-split metrics for
+#'   the winning model), and `all_metrics` (every formula x order combination
+#'   tried, ranked by mean CV metric). Returns NULL (and skips all work) if
+#'   the state/city was already concluded.
 run_model_selection <- function(
   state = NULL,
   concluded_states = NULL,
@@ -187,157 +265,4 @@ run_model_selection <- function(
   target_ids <- paste0("target_", 1:4)
 
   final_metrics <- lapply(seq_along(train_ids), function(i) {
-    actual    <- dengue_state$cases[dengue_state[[target_ids[i]]] == 1]
-    pred     <- best_pred |> filter(train_id == train_ids[i])
-    pred_df  <- pred |> select(date, pred, starts_with("lower_"), starts_with("upper_"))
-    compute_metrics(pred, actual)
-  }) |> bind_rows() |> mutate(target_id = target_ids)
-  # save files
-  write_csv(final_metrics, file.path("sarimax/results/metrics/", paste0(metric_name, "_best_model_", disease, "_", state, ".csv")))
-  write_csv(metrics, file.path("sarimax/results/metrics/", paste0("metrics_all_formulas_", disease, "_", state, ".csv")))
-
-  # update concluded states
-  if (!is.null(state)) {
-    concluded_states <- rbind(concluded_states, data.frame(state = state, stringsAsFactors = FALSE))
-    write_csv(concluded_states, concluded_states_path)
-  } else if (!is.null(city)) {
-    concluded_cities <- rbind(concluded_cities, data.frame(city = city, stringsAsFactors = FALSE))
-    write_csv(concluded_cities, concluded_cities_path)
-  }
-  return(list(
-    best_order = best_order,
-    best_formula = best_formula,
-    best_pred = best_pred,
-    final_metrics = final_metrics,
-    all_metrics = metrics
-  ))
-}
-
-
-states <- c("AC", "AL", "AM", "AP", "BA", "CE", "DF", "GO", "MA",
-            "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ",
-            "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO")
-
-
-#-----------------------------------------------------------------------------------
-# Run model selection for each state and save results
-#-----------------------------------------------------------------------------------
-
-results_state_dengue <- lapply(states, function(st) {
-  concluded_states <- tryCatch({
-    read_csv("sarimax/results/concluded_states_dengue.csv", show_col_types = FALSE)
-  }, error = function(e) {
-    data.frame(state = character(0), stringsAsFactors = FALSE)
-  })
-  run_model_selection(
-    state = st,
-    concluded_states = concluded_states
-  )
-}
-)
-
-# get summary
-best_wis_df_dengue <- lapply(states, function(st) {
-  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_dengue_", st, ".csv")
-  data <- read_csv(file_name, show_col_types = FALSE)
-  data[1, ] |> mutate(state = st, .before = 1)
-}) |> bind_rows()
-write_csv(best_wis_df_dengue, "sarimax/results/metrics/best_wis_dengue_all_states.csv")
-
-results_state_chikungunya <- lapply(states, function(st) {
-  concluded_states <- tryCatch({
-    read_csv("sarimax/results/concluded_states_chikungunya.csv", show_col_types = FALSE)
-  }, error = function(e) {
-    data.frame(state = character(0), stringsAsFactors = FALSE)
-  })
-  run_model_selection(
-    state = st,
-    concluded_states = concluded_states,
-    disease = "chikungunya",
-    concluded_states_path = "sarimax/results/concluded_states_chikungunya.csv"
-  )
-}
-)
-
-best_wis_df_chikungunya <- lapply(states, function(st) {
-  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_chikungunya_", st, ".csv")
-  data <- read_csv(file_name, show_col_types = FALSE)
-  data[1, ] |> mutate(state = st, .before = 1)
-}) |> bind_rows()
-write_csv(best_wis_df_chikungunya, "sarimax/results/metrics/best_wis_chikungunya_all_states.csv")
-
-#-----------------------------------------------------------------------------------
-# Run model selection for each city and save results
-#-----------------------------------------------------------------------------------
-
-cities_dengue <- c(
-  2931350,
-  2933307,
-  2302503,
-  3119401,
-  3549805,
-  3541406,
-  1200401,
-  1200203,
-  1716109,
-  4113700,
-  4103701,
-  4104808,
-  5201405,
-  5102637,
-  5215231
-)
-
-cities_chikungunya <- c(
-  2211001,
-  2931350,
-  3143302,
-  3119401,
-  1721000,
-  1716109,
-  4104808,
-  4219507,
-  5103403,
-  5102637
-)
-
-results_city_dengue <- lapply(cities_dengue, function(city) {
-  concluded_cities <- tryCatch({
-    read_csv("sarimax/results/concluded_cities_dengue.csv", show_col_types = FALSE)
-  }, error = function(e) {
-    data.frame(city = character(0), stringsAsFactors = FALSE)
-  })
-  run_model_selection(
-    city = city,
-    concluded_cities = concluded_cities
-  )
-}
-)
-
-best_wis_df_dengue_cities <- lapply(cities_dengue, function(city) {
-  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_dengue", city, ".csv")
-  data <- read_csv(file_name, show_col_types = FALSE)
-  data[1, ] |> mutate(city = city, .before = 1)
-}) |> bind_rows()
-write_csv(best_wis_df_dengue_cities, "sarimax/results/metrics/best_wis_dengue_all_cities.csv")
-
-results_city_chikungunya <- lapply(cities_chikungunya, function(city) {
-  concluded_cities <- tryCatch({
-    read_csv("sarimax/results/concluded_cities_chikungunya.csv", show_col_types = FALSE)
-  }, error = function(e) {
-    data.frame(city = character(0), stringsAsFactors = FALSE)
-  })
-  run_model_selection(
-    city = city,
-    concluded_cities = concluded_cities,
-    disease = "chikungunya"
-  )
-}
-)
-
-best_wis_df_chikungunya_cities <- lapply(cities_chikungunya, function(city) {
-  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_chikungunya", city, ".csv")
-  data <- read_csv(file_name, show_col_types = FALSE)
-  data[1, ] |> mutate(city = city, .before = 1)
-}) |> bind_rows()
-write_csv(best_wis_df_chikungunya_cities, "sarimax/results/metrics/best_wis_chikungunya_all_cities.csv")
+    actual    <- dengue_state$cases[dengue_state[[target

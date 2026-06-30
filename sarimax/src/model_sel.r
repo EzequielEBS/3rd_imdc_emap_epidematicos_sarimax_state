@@ -149,41 +149,66 @@ run_model_selection <- function(
   )
 
   if (pca) {
-    pca_result <- pca_all(
-      data = dengue_state,
-      candidates = candidates[!grepl("enso|iod|pdo", candidates)],
-      var_threshold = pca_var_threshold
-    )
-    dengue_state <- pca_result$data
-    pcs <- pca_result$variables
-    # Only go up to the components selected by var_threshold
-    max_k <- min(k, length(pcs))
-
-    # ENSO/IOD/PDO were deliberately excluded from the PCA matrix above so they
-    # aren't blended away by an unsupervised projection. Test whether they carry
-    # signal beyond what the retained local-weather PCs already explain, and add
-    # back any that do, instead of dropping them outright.
+    non_index_candidates <- candidates[!grepl("enso|iod|pdo", candidates)]
     climate_indices <- intersect(c("enso", "iod", "pdo"), candidates)
-    kept_indices <- character(0)
-    if (length(climate_indices) > 0) {
-      retained <- filter_redundant_indices(
-        data       = dengue_state,
-        covariates = c(pcs, climate_indices),
-        indices    = climate_indices,
-        threshold  = index_cor_threshold
-      )
-      kept_indices <- intersect(climate_indices, retained)
-    }
 
-    formulas <- lapply(seq_len(max_k), function(i) {
-      reformulate(pcs[1:i], response = "cases")
-    })
-    if (length(kept_indices) > 0) {
-      formulas <- c(formulas, lapply(seq_len(max_k), function(i) {
-        reformulate(c(pcs[1:i], kept_indices), response = "cases")
-      }))
+    if (length(non_index_candidates) == 0) {
+      # Variance/correlation filtering dropped every local-weather covariate
+      # for this state/city, leaving a zero-column matrix. prcomp()/svd()
+      # can't factorize that ("a dimension is zero"), so skip PCA entirely
+      # and fall back to climate indices alone (if any survived the
+      # correlation filter) or a plain covariate-free SARIMA.
+      message(
+        "No local-weather covariates survived filtering for ",
+        if (!is.null(state)) state else city,
+        " — skipping PCA; fitting with climate indices only (if any) or no covariates."
+      )
+      pcs <- character(0)
+      max_k <- 0
+      # No PCs to test redundancy against, so keep whatever indices already
+      # passed filter_by_correlation() above as-is.
+      kept_indices <- climate_indices
+      formulas <- list(reformulate(
+        if (length(kept_indices) > 0) kept_indices else character(0),
+        response = "cases"
+      ))
+      candidates <- kept_indices
+    } else {
+      pca_result <- pca_all(
+        data = dengue_state,
+        candidates = non_index_candidates,
+        var_threshold = pca_var_threshold
+      )
+      dengue_state <- pca_result$data
+      pcs <- pca_result$variables
+      # Only go up to the components selected by var_threshold
+      max_k <- min(k, length(pcs))
+
+      # ENSO/IOD/PDO were deliberately excluded from the PCA matrix above so they
+      # aren't blended away by an unsupervised projection. Test whether they carry
+      # signal beyond what the retained local-weather PCs already explain, and add
+      # back any that do, instead of dropping them outright.
+      kept_indices <- character(0)
+      if (length(climate_indices) > 0) {
+        retained <- filter_redundant_indices(
+          data       = dengue_state,
+          covariates = c(pcs, climate_indices),
+          indices    = climate_indices,
+          threshold  = index_cor_threshold
+        )
+        kept_indices <- intersect(climate_indices, retained)
+      }
+
+      formulas <- lapply(seq_len(max_k), function(i) {
+        reformulate(pcs[1:i], response = "cases")
+      })
+      if (length(kept_indices) > 0) {
+        formulas <- c(formulas, lapply(seq_len(max_k), function(i) {
+          reformulate(c(pcs[1:i], kept_indices), response = "cases")
+        }))
+      }
+      candidates <- c(pcs, kept_indices)
     }
-    candidates <- c(pcs, kept_indices)
   } else {
     candidates <- select_best_per_variable(
       dengue_state[
@@ -271,9 +296,11 @@ run_model_selection <- function(
     pred_df  <- pred |> select(date, pred, starts_with("lower_"), starts_with("upper_"))
     compute_metrics(pred, actual)
   }) |> bind_rows() |> mutate(target_id = target_ids)
-  # save files
-  write_csv(final_metrics, file.path("sarimax/results/metrics/", paste0(metric_name, "_best_model_", disease, "_", state, ".csv")))
-  write_csv(metrics, file.path("sarimax/results/metrics/", paste0("metrics_all_formulas_", disease, "_", state, ".csv")))
+  # save files — use whichever identifier (state or city) this run was for,
+  # so per-city runs don't all collide on the same output file.
+  id <- if (!is.null(state)) state else city
+  write_csv(final_metrics, file.path("sarimax/results/metrics/", paste0(metric_name, "_best_model_", disease, "_", id, ".csv")))
+  write_csv(metrics, file.path("sarimax/results/metrics/", paste0("metrics_all_formulas_", disease, "_", id, ".csv")))
 
   # update concluded states
   if (!is.null(state)) {
@@ -394,7 +421,7 @@ results_city_dengue <- lapply(cities_dengue, function(city) {
 )
 
 best_wis_df_dengue_cities <- lapply(cities_dengue, function(city) {
-  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_dengue", city, ".csv")
+  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_dengue_", city, ".csv")
   data <- read_csv(file_name, show_col_types = FALSE)
   data[1, ] |> mutate(city = city, .before = 1)
 }) |> bind_rows()
@@ -409,13 +436,14 @@ results_city_chikungunya <- lapply(cities_chikungunya, function(city) {
   run_model_selection(
     city = city,
     concluded_cities = concluded_cities,
-    disease = "chikungunya"
+    disease = "chikungunya",
+    concluded_cities_path = "sarimax/results/concluded_cities_chikungunya.csv"
   )
 }
 )
 
 best_wis_df_chikungunya_cities <- lapply(cities_chikungunya, function(city) {
-  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_chikungunya", city, ".csv")
+  file_name <- paste0("sarimax/results/metrics/metrics_all_formulas_chikungunya_", city, ".csv")
   data <- read_csv(file_name, show_col_types = FALSE)
   data[1, ] |> mutate(city = city, .before = 1)
 }) |> bind_rows()
